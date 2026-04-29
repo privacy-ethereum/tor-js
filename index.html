@@ -361,9 +361,82 @@
         background: rgba(79, 172, 254, 0.25);
         border-color: rgba(79, 172, 254, 0.5);
       }
+
+      .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        padding: 20px;
+      }
+
+      .modal-overlay.hidden {
+        display: none;
+      }
+
+      .modal {
+        background: linear-gradient(135deg, #1a1f2e 0%, #0f1419 100%);
+        border: 1px solid rgba(79, 172, 254, 0.3);
+        border-radius: 12px;
+        padding: 32px;
+        max-width: 480px;
+        width: 100%;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      }
+
+      .modal-title {
+        font-size: 20px;
+        font-weight: 600;
+        margin-bottom: 16px;
+        color: #e0e0e0;
+      }
+
+      .modal-body {
+        font-size: 14px;
+        color: #b0b0b0;
+        line-height: 1.6;
+        margin-bottom: 24px;
+      }
+
+      .modal-buttons {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+      }
+
+      .modal-buttons .btn-secondary {
+        background: rgba(255, 255, 255, 0.08);
+        color: #e0e0e0;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+      }
+
+      .modal-buttons .btn-secondary:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.12);
+        box-shadow: none;
+      }
     </style>
   </head>
   <body>
+    <div id="outdatedModal" class="modal-overlay">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div id="modalTitle" class="modal-title">This demo is outdated</div>
+        <div class="modal-body">
+          tor-js has been rewritten to use Tor Project's rewrite in Rust —
+          <a href="https://gitlab.torproject.org/tpo/core/arti" target="_blank" rel="noopener noreferrer" style="color: #4facfe;">Arti</a>
+          (via WebAssembly).
+        </div>
+        <div class="modal-buttons">
+          <button class="btn-secondary" onclick="dismissOutdatedModal()">Stay Here</button>
+          <button onclick="goToNewVersion()">Go to New Version</button>
+        </div>
+      </div>
+    </div>
+
     <div class="container">
       <header>
         <h1>🧅 Tor Client Demo</h1>
@@ -479,6 +552,14 @@
 
     <script type="module" src="/demo.ts"></script>
     <script>
+      function dismissOutdatedModal() {
+        document.getElementById('outdatedModal').classList.add('hidden');
+      }
+
+      function goToNewVersion() {
+        window.location.href = 'https://voltrevo.github.io/arti/';
+      }
+
       function toggleAdvanced() {
         const toggle = document.querySelector('.advanced-toggle');
         const content = document.getElementById('advancedContent');

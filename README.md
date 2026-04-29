@@ -1,5 +1,13 @@
 # tor-js
 
+# Superseded
+
+tor-js is now based on Tor Project's rewrite in rust - Arti (via WebAssembly).
+
+It currently lives at https://github.com/voltrevo/arti/tree/main/crates/tor-js/ts-wrapper .
+
+# About the Old Version
+
 Embedded Tor implemented in JS.
 
 **🎯 Try the Live Demo:** https://voltrevo.github.io/tor-js/
