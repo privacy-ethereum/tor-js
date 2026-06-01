@@ -6,3 +6,7 @@ dist/
 # Rust / wasm-pack
 rust/target/
 rust/pkg/
+
+# GitHub Pages showcase assembly (examples/showcase/run.sh, CI _site)
+_site/
+examples/showcase/dist/

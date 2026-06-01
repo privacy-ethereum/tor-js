@@ -1,0 +1,1239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws: https: http:; img-src 'self' data:; font-src 'self'; base-uri 'self'; form-action 'none';">
+    <title>tor-js showcase</title>
+    <link rel="icon" href="tor.svg" type="image/svg+xml">
+    <style>
+        /* Dracula Pro Color Palette */
+        :root {
+            --bg: #22212C;
+            --bg-dark: #1a1922;
+            --bg-light: #2d2c3a;
+            --selection: #454158;
+            --comment: #7970A9;
+            --fg: #F8F8F2;
+            --cyan: #80FFEA;
+            --green: #8AFF80;
+            --orange: #FFCA80;
+            --pink: #FF80BF;
+            --purple: #9580FF;
+            --red: #FF9580;
+            --yellow: #FFFF80;
+        }
+
+        * { box-sizing: border-box; }
+        html, body {
+            height: 100%;
+            margin: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 0;
+            background: var(--bg);
+            min-height: 100vh;
+            color: var(--fg);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .site-header {
+            background: var(--bg-dark);
+            border-bottom: 1px solid var(--selection);
+            padding: 16px 5%;
+        }
+
+        .site-header-inner {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+        }
+
+        .github-link {
+            margin-left: auto;
+            color: var(--comment);
+            transition: color 0.2s;
+        }
+        .github-link:hover {
+            color: var(--foreground);
+        }
+        .github-link svg {
+            width: 24px;
+            height: 24px;
+            fill: currentColor;
+        }
+
+        .site-logo {
+            width: 40px;
+            height: 40px;
+        }
+
+        .site-title {
+            margin: 0;
+            font-size: 22px;
+            background: linear-gradient(135deg, var(--purple), var(--pink));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-weight: 600;
+        }
+
+        .site-subtitle {
+            color: var(--comment);
+            font-size: 13px;
+            margin-left: 12px;
+            padding-left: 12px;
+            border-left: 1px solid var(--selection);
+        }
+
+        .main-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 20px 5%;
+            margin: 0 auto;
+            flex: 1;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .panel {
+            background: var(--bg-light);
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--selection);
+        }
+
+        .section {
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--cyan);
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-bar {
+            background: var(--bg-dark);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--comment);
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.ready { background: var(--green); }
+        .status-dot.loading { background: var(--yellow); }
+        .status-dot.error { background: var(--red); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            background: linear-gradient(135deg, var(--cyan), var(--green));
+            color: var(--bg);
+            border: none;
+            padding: 10px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(128, 255, 234, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button:focus-visible {
+            outline: 2px solid var(--cyan);
+            outline-offset: 2px;
+        }
+
+        button.secondary {
+            background: var(--selection);
+            color: var(--fg);
+        }
+
+        button.secondary:hover:not(:disabled) {
+            background: var(--comment);
+            box-shadow: none;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            color: var(--comment);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--selection);
+            border-radius: 8px;
+            font-size: 13px;
+            background: var(--bg-dark);
+            color: var(--fg);
+            transition: border-color 0.2s, outline 0.2s;
+        }
+
+        input:focus, select:focus {
+            outline: 2px solid var(--cyan);
+            outline-offset: 2px;
+            border-color: var(--cyan);
+        }
+
+        select {
+            cursor: pointer;
+        }
+
+        select option {
+            background: var(--bg);
+            color: var(--fg);
+        }
+
+        .input-group {
+            margin-bottom: 14px;
+        }
+
+        .request-section {
+            background: var(--bg-dark);
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .request-info {
+            font-size: 12px;
+            color: var(--comment);
+            margin-bottom: 14px;
+            padding: 8px 12px;
+            background: var(--bg);
+            border-radius: 6px;
+        }
+
+        .output-box {
+            background: var(--bg);
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 12px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 12px;
+            min-height: 60px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+            color: var(--comment);
+        }
+
+        .output-box.success { color: var(--green); }
+        .output-box.error { color: var(--red); }
+        .output-box.loading { color: var(--cyan); }
+
+        .log-panel {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .log-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .log-output {
+            flex: 1;
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 11px;
+            overflow-y: auto;
+            max-height: calc(100vh - 280px);
+            min-height: 200px;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin-bottom: 2px;
+        }
+
+        .log-time { color: var(--comment); }
+        .log-info { color: var(--green); }
+        .log-warn { color: var(--yellow); }
+        .log-error { color: var(--red); }
+        .log-debug { color: var(--comment); }
+
+        .empty-state {
+            color: var(--selection);
+            font-style: italic;
+        }
+
+        .log-separator {
+            font-size: 10px;
+            color: var(--comment);
+            text-align: center;
+            padding: 5px 0;
+            margin: 4px 0;
+            border-top: 1px dashed var(--selection);
+            border-bottom: 1px dashed var(--selection);
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .log-entry.log-prev {
+            opacity: 0.55;
+        }
+
+        .site-footer {
+            background: var(--bg-dark);
+            border-top: 1px solid var(--selection);
+            padding: 12px 5%;
+            position: sticky;
+            bottom: 0;
+            z-index: 100;
+        }
+
+        .site-footer-inner {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: var(--comment);
+        }
+
+        .site-footer a {
+            color: var(--cyan);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .site-footer a:hover {
+            color: var(--green);
+            text-decoration: underline;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 16px;
+        }
+
+        .gateway-config {
+            background: var(--bg);
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 12px;
+        }
+
+        .gateway-config .input-group {
+            margin-bottom: 10px;
+        }
+
+        .gateway-config .input-group:last-child {
+            margin-bottom: 0;
+        }
+
+        details.debug-section {
+            margin-bottom: 0;
+        }
+
+        details.debug-section summary {
+            font-size: 12px;
+            color: var(--comment);
+            cursor: pointer;
+            padding: 6px 0;
+            user-select: none;
+        }
+
+        details.debug-section summary:hover {
+            color: var(--fg);
+        }
+
+        .debug-content {
+            background: var(--bg);
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 6px;
+        }
+
+        .debug-content .output-box {
+            margin-top: 8px;
+            min-height: 40px;
+            max-height: 120px;
+        }
+
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+
+        .modal-backdrop.open { display: flex; }
+
+        .modal {
+            background: var(--bg-light);
+            border: 1px solid var(--selection);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 640px;
+            width: 100%;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--yellow);
+            margin: 0 0 12px 0;
+        }
+
+        .modal-body {
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--fg);
+            margin-bottom: 20px;
+        }
+
+        .modal-body code {
+            background: var(--bg-dark);
+            color: var(--cyan);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 12px;
+            word-break: break-all;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        @media (max-width: 900px) {
+            .main-container {
+                grid-template-columns: 1fr;
+            }
+
+            .log-output {
+                min-height: 200px;
+            }
+
+            .site-header-inner {
+                flex-wrap: wrap;
+            }
+
+            .site-subtitle {
+                width: 100%;
+                margin-left: 0;
+                padding-left: 0;
+                border-left: none;
+                margin-top: 4px;
+            }
+
+            .site-footer-inner {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .site-title { font-size: 18px; }
+            button { padding: 8px 14px; font-size: 12px; }
+
+            .log-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Site Header -->
+    <header class="site-header">
+        <div class="site-header-inner">
+            <img src="tor.svg" alt="tor-js logo" class="site-logo">
+            <h1 class="site-title">tor-js</h1>
+            <span class="site-subtitle">Tor in JS via WASM using Arti - Tor's Official Rewrite in Rust</span>
+            <a href="https://github.com/voltrevo/tor-js/blob/main/README.md" class="github-link" title="View on GitHub" target="_blank" rel="noopener">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            </a>
+        </div>
+    </header>
+
+    <!-- Default gateway warning dialog -->
+    <div class="modal-backdrop" id="gatewayModal" role="dialog" aria-modal="true" aria-labelledby="gatewayModalTitle" aria-describedby="gatewayModalBody">
+        <div class="modal">
+            <h2 class="modal-title" id="gatewayModalTitle">Heads up</h2>
+            <div class="modal-body" id="gatewayModalBody">
+                <p style="margin: 0 0 12px 0;"><strong>Important:</strong> This will connect using <code id="gatewayModalUrl"></code>, which is for demonstration purposes only. It has limited capacity and may be removed at any time. You'll need to host your own gateway if you want to deploy this solution for your users.</p>
+                <p style="margin: 0;">The gateway is not doing any of the tor protocol - it's only required for TCP. In NodeJS you can run tor-js without a gateway because it can open TCP sockets directly.</p>
+            </div>
+            <div class="modal-actions">
+                <button id="gatewayModalCancel" class="secondary">Cancel</button>
+                <button id="gatewayModalContinue">Continue</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-container">
+        <!-- Left Panel - Controls -->
+        <div class="panel" role="main">
+            <div class="section">
+                <div class="section-title" id="connectionLabel">Connection</div>
+                <div class="status-bar" role="status" aria-live="polite" aria-atomic="true" aria-labelledby="connectionLabel">
+                    <div class="status-dot" id="statusDot" aria-hidden="true"></div>
+                    <span id="status">Not initialized</span>
+                </div>
+
+                <div class="input-group">
+                    <label for="gatewayUrl">Gateway URL</label>
+                    <input type="url" id="gatewayUrl" name="gatewayUrl" value="https://tor-js-gateway.voltrevo.com" placeholder="https://tor-js-gateway.voltrevo.com">
+                </div>
+
+                <div class="btn-group" style="margin-top: 12px;">
+                    <button id="connectBtn" aria-label="Connect to the Tor network">Connect</button>
+                    <button id="closeBtn" class="secondary" disabled aria-label="Close Tor client connection">Disconnect</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">HTTP Request</div>
+
+                <div class="request-section">
+                    <div class="request-info">
+                        Make HTTP requests through the Tor network via arti-client.
+                    </div>
+
+                    <div class="input-group">
+                        <label for="presetSelect">Preset</label>
+                        <select id="presetSelect" name="preset">
+                            <optgroup label="Test Endpoints">
+                                <option value="https://check.torproject.org/api/ip" selected>Tor IP Check (JSON)</option>
+                                <option value="https://check.torproject.org/">Tor Check (HTML)</option>
+                                <option value="https://api.ipify.org?format=json">IP Check (ipify)</option>
+                                <option value="https://httpbin.org/user-agent">HTTPBin User-Agent</option>
+                            </optgroup>
+                            <optgroup label="Custom">
+                                <option value="custom">Custom URL...</option>
+                            </optgroup>
+                        </select>
+                    </div>
+
+                    <div class="input-group">
+                        <label for="urlInput">URL</label>
+                        <input type="url" id="urlInput" name="url" value="https://check.torproject.org/api/ip" placeholder="https://..." autocomplete="url">
+                    </div>
+
+                    <button id="fetchBtn" disabled aria-label="Send HTTP request through Tor">Fetch</button>
+                    <div class="output-box" id="fetchOutput" role="region" aria-live="polite" aria-label="Request result">Ready...</div>
+                </div>
+            </div>
+
+            <details class="debug-section">
+                <summary>Debug</summary>
+                <div class="debug-content">
+                    <div class="btn-group" style="flex-wrap: wrap; gap: 8px;">
+                        <button id="deleteStateBtn" class="secondary" style="padding: 6px 12px;">Delete state (except microdescs)</button>
+                        <button id="downloadDebugBtn" class="secondary" style="padding: 6px 12px;">Download debug zip</button>
+                        <button id="loadStateBtn" class="secondary" style="padding: 6px 12px;">Load debug state</button>
+                        <input type="file" id="loadStateFile" accept=".zip" style="display: none;">
+                    </div>
+                    <div class="output-box" id="debugOutput"></div>
+                </div>
+            </details>
+        </div>
+
+        <!-- Right Panel - Logs -->
+        <div class="panel log-panel" role="complementary">
+            <div class="log-header">
+                <div class="section-title" id="logsLabel">Connection Logs</div>
+                <div class="log-controls">
+                    <select id="logLevel" name="logLevel" style="width: auto; padding: 6px 8px; font-size: 12px;" aria-label="Log level">
+                        <option value="error">Error</option>
+                        <option value="warn">Warn</option>
+                        <option value="info">Info</option>
+                        <option value="debug" selected>Debug</option>
+                        <option value="trace">Trace</option>
+                    </select>
+                    <button id="clearBtn" class="secondary" style="padding: 6px 12px;" aria-label="Clear all log entries">Clear</button>
+                </div>
+            </div>
+            <div class="log-output" id="logOutput" role="log" aria-live="off" aria-labelledby="logsLabel">
+                <div class="empty-state">Logs will appear here. Click "Connect" to start.</div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { TorClient, Log, storage } from './dist/entryPoints/wasm-base64/index.js';
+
+        // ── Constants ──────────────────────────────────────────────────────────
+        const MAX_LOG_ENTRIES = 500;       // max entries shown in DOM at once
+        const MAX_PERSISTED_LOGS = 10000;  // max entries kept in IndexedDB
+        const LOG_DB_NAME = 'tor-js-logs';
+        const LOG_STORE_NAME = 'logs';
+        const SESSION_ID = Date.now();     // unique identifier for this page load
+        const DEFAULT_GATEWAY = 'https://tor-js-gateway.voltrevo.com';
+
+        // ── URL validation ─────────────────────────────────────────────────────
+        function validateUrl(url) {
+            if (!url || url.trim() === '') {
+                return { valid: false, error: 'URL cannot be empty' };
+            }
+            try {
+                const parsed = new URL(url);
+                if (!['https:', 'http:'].includes(parsed.protocol)) {
+                    return { valid: false, error: 'Only HTTP/HTTPS protocols are supported' };
+                }
+                const hostname = parsed.hostname;
+                if (hostname === 'localhost' ||
+                    hostname === '127.0.0.1' ||
+                    hostname.startsWith('192.168.') ||
+                    hostname.startsWith('10.') ||
+                    /^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname) ||
+                    hostname === '0.0.0.0') {
+                    return { valid: false, error: 'Private/local addresses are not allowed' };
+                }
+                return { valid: true, hostname };
+            } catch (e) {
+                return { valid: false, error: 'Invalid URL format' };
+            }
+        }
+
+        // ── Log entry DOM builder ──────────────────────────────────────────────
+        function createLogEntry(level, msg, isPrev = false) {
+            const entry = document.createElement('div');
+            entry.className = isPrev ? 'log-entry log-prev' : 'log-entry';
+
+            const levelSpan = document.createElement('span');
+            const levelUpper = level.toUpperCase();
+            const levelClasses = { INFO: 'log-info', ERROR: 'log-error', WARN: 'log-warn', DEBUG: 'log-debug' };
+            levelSpan.className = levelClasses[levelUpper] ?? 'log-debug';
+            levelSpan.textContent = levelUpper;
+            levelSpan.style.display = 'inline-block';
+            levelSpan.style.minWidth = '6ch';
+
+            const messageSpan = document.createElement('span');
+            messageSpan.textContent = msg;
+
+            entry.appendChild(levelSpan);
+            entry.appendChild(messageSpan);
+            return entry;
+        }
+
+        // ── Log persistence (IndexedDB) ────────────────────────────────────────
+        let _logDb = null;
+
+        async function getLogDb() {
+            if (_logDb) return _logDb;
+            _logDb = await new Promise((resolve, reject) => {
+                const req = indexedDB.open(LOG_DB_NAME, 1);
+                req.onerror = () => reject(req.error);
+                req.onsuccess = () => resolve(req.result);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains(LOG_STORE_NAME)) {
+                        db.createObjectStore(LOG_STORE_NAME, { keyPath: 'id', autoIncrement: true });
+                    }
+                };
+            });
+            return _logDb;
+        }
+
+        async function persistLog(level, msg) {
+            try {
+                const db = await getLogDb();
+                await new Promise((resolve, reject) => {
+                    const tx = db.transaction(LOG_STORE_NAME, 'readwrite');
+                    const store = tx.objectStore(LOG_STORE_NAME);
+                    const addReq = store.add({ ts: Date.now(), level, msg, session: SESSION_ID });
+                    addReq.onsuccess = () => {
+                        // Prune entries that exceed the rolling window
+                        store.delete(IDBKeyRange.upperBound(addReq.result - MAX_PERSISTED_LOGS));
+                        tx.oncomplete = resolve;
+                    };
+                    addReq.onerror = () => reject(addReq.error);
+                    tx.onerror = () => reject(tx.error);
+                });
+            } catch (_) { /* best-effort: never let storage errors surface to UI */ }
+        }
+
+        async function getAllLogs() {
+            const db = await getLogDb();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(LOG_STORE_NAME, 'readonly');
+                const req = tx.objectStore(LOG_STORE_NAME).getAll();
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        // Render up to 200 previous-session entries below a separator.
+        async function loadPreviousLogs(output) {
+            try {
+                const allLogs = await getAllLogs();
+                const prev = allLogs.filter(e => e.session !== SESSION_ID);
+                if (prev.length === 0) return;
+
+                const emptyState = output.querySelector('.empty-state');
+                if (emptyState) emptyState.remove();
+
+                const sep = document.createElement('div');
+                sep.className = 'log-separator';
+                sep.textContent = `── ${prev.length} entries from previous sessions ──`;
+                output.appendChild(sep);
+
+                // Show the most recent 200, newest just below the separator
+                const toShow = prev.slice(-200);
+                for (let i = toShow.length - 1; i >= 0; i--) {
+                    output.appendChild(createLogEntry(toShow[i].level, toShow[i].msg, true));
+                }
+            } catch (_) { /* best-effort */ }
+        }
+
+        // ── Minimal ZIP builder (store/no-compression method) ─────────────────
+        function buildZip(files) {
+            // Build CRC-32 lookup table (standard polynomial 0xEDB88320)
+            const crc32Table = new Uint32Array(256);
+            for (let n = 0; n < 256; n++) {
+                let c = n;
+                for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+                crc32Table[n] = c;
+            }
+            function crc32(buf) {
+                let c = 0xFFFFFFFF;
+                for (const b of buf) c = (c >>> 8) ^ crc32Table[(c ^ b) & 0xFF];
+                return (c ^ 0xFFFFFFFF) >>> 0;
+            }
+
+            const enc = new TextEncoder();
+            const localParts = [];
+            const cdParts = [];
+            let localOffset = 0;
+
+            for (const { name, data } of files) {
+                const nameBytes = enc.encode(name);
+                const crc = crc32(data);
+                const size = data.length;
+
+                // Local file header (30 bytes fixed + filename)
+                const lh = new Uint8Array(30 + nameBytes.length);
+                const lv = new DataView(lh.buffer);
+                lv.setUint32(0, 0x04034b50, true);        // local file header signature
+                lv.setUint16(4, 20, true);                 // version needed to extract (2.0)
+                lv.setUint32(14, crc, true);               // CRC-32
+                lv.setUint32(18, size, true);              // compressed size (= uncompressed, stored)
+                lv.setUint32(22, size, true);              // uncompressed size
+                lv.setUint16(26, nameBytes.length, true);  // filename length
+                lh.set(nameBytes, 30);
+
+                // Central directory header (46 bytes fixed + filename)
+                const cd = new Uint8Array(46 + nameBytes.length);
+                const cv = new DataView(cd.buffer);
+                cv.setUint32(0, 0x02014b50, true);         // central directory signature
+                cv.setUint16(4, 20, true);                 // version made by
+                cv.setUint16(6, 20, true);                 // version needed
+                cv.setUint32(16, crc, true);               // CRC-32
+                cv.setUint32(20, size, true);              // compressed size
+                cv.setUint32(24, size, true);              // uncompressed size
+                cv.setUint16(28, nameBytes.length, true);  // filename length
+                cv.setUint32(42, localOffset, true);       // offset of local file header
+                cd.set(nameBytes, 46);
+
+                localParts.push(lh, data);
+                cdParts.push(cd);
+                localOffset += lh.length + size;
+            }
+
+            // End of central directory record
+            const cdSize = cdParts.reduce((s, p) => s + p.length, 0);
+            const eocd = new Uint8Array(22);
+            const ev = new DataView(eocd.buffer);
+            ev.setUint32(0, 0x06054b50, true);   // end of central directory signature
+            ev.setUint16(8, files.length, true);  // number of entries on this disk
+            ev.setUint16(10, files.length, true); // total number of entries
+            ev.setUint32(12, cdSize, true);        // size of central directory
+            ev.setUint32(16, localOffset, true);   // offset of central directory
+
+            return new Blob([...localParts, ...cdParts, eocd], { type: 'application/zip' });
+        }
+
+        // ── Minimal ZIP reader (store/no-compression only) ──────────────────────
+        function readZip(arrayBuffer) {
+            const view = new DataView(arrayBuffer);
+            const dec = new TextDecoder();
+            const files = {};
+            let offset = 0;
+
+            while (offset + 30 <= arrayBuffer.byteLength) {
+                if (view.getUint32(offset, true) !== 0x04034b50) break;
+                const nameLen = view.getUint16(offset + 26, true);
+                const extraLen = view.getUint16(offset + 28, true);
+                const compSize = view.getUint32(offset + 18, true);
+                const name = dec.decode(new Uint8Array(arrayBuffer, offset + 30, nameLen));
+                const dataStart = offset + 30 + nameLen + extraLen;
+                files[name] = new Uint8Array(arrayBuffer, dataStart, compSize);
+                offset = dataStart + compSize;
+            }
+
+            return files;
+        }
+
+        // ── Log instance ───────────────────────────────────────────────────────
+        const log = new Log({
+            rawLog: (level, ...args) => {
+                const output = document.getElementById('logOutput');
+                if (!output) return;
+
+                const emptyState = output.querySelector('.empty-state');
+                if (emptyState) emptyState.remove();
+
+                // Keep DOM bounded; oldest entries (at the bottom) are dropped first
+                while (output.children.length >= MAX_LOG_ENTRIES) {
+                    output.removeChild(output.lastChild);
+                }
+
+                const msg = args.join(' ');
+                persistLog(level, msg);
+                output.insertBefore(createLogEntry(level, msg), output.firstChild);
+            },
+        });
+
+        // ── Global error handlers ──────────────────────────────────────────────
+        window.addEventListener('error', (event) => {
+            console.error('Uncaught error:', event.error);
+            log.error('Uncaught error: ' + (event.error?.message || 'Unknown error'));
+        });
+
+        window.addEventListener('unhandledrejection', (event) => {
+            console.error('Unhandled promise rejection:', event.reason);
+            log.error('Unhandled rejection: ' + (event.reason?.message || event.reason || 'Unknown error'));
+        });
+
+        async function run() {
+            const statusEl = document.getElementById('status');
+            const statusDot = document.getElementById('statusDot');
+            const gatewayUrlInput = document.getElementById('gatewayUrl');
+            const connectBtn = document.getElementById('connectBtn');
+            const closeBtn = document.getElementById('closeBtn');
+            const fetchBtn = document.getElementById('fetchBtn');
+            const presetSelect = document.getElementById('presetSelect');
+            const urlInput = document.getElementById('urlInput');
+            const fetchOutput = document.getElementById('fetchOutput');
+            const clearBtn = document.getElementById('clearBtn');
+            const logLevelSelect = document.getElementById('logLevel');
+            const logOutput = document.getElementById('logOutput');
+            const deleteStateBtn = document.getElementById('deleteStateBtn');
+            const downloadDebugBtn = document.getElementById('downloadDebugBtn');
+            const loadStateBtn = document.getElementById('loadStateBtn');
+            const loadStateFile = document.getElementById('loadStateFile');
+            const debugOutput = document.getElementById('debugOutput');
+
+            // Preset selection handler
+            presetSelect.addEventListener('change', () => {
+                const value = presetSelect.value;
+                if (value !== 'custom') {
+                    urlInput.value = value;
+                }
+            });
+
+            // Clear logs (DOM only; persisted history is preserved for download)
+            clearBtn.addEventListener('click', () => {
+                logOutput.innerHTML = '<div class="empty-state">Logs cleared.</div>';
+            });
+
+            // Update log level on the active TorClient
+            logLevelSelect.addEventListener('change', () => {
+                if (torClient) {
+                    torClient.setLogLevel(logLevelSelect.value);
+                    log.info(`Log level changed to ${logLevelSelect.value}`);
+                }
+            });
+
+            // Debug: delete state except microdescs
+            deleteStateBtn.addEventListener('click', async () => {
+                deleteStateBtn.disabled = true;
+                debugOutput.className = 'output-box loading';
+                debugOutput.textContent = 'Deleting...';
+                try {
+                    const dbName = 'tor-js';
+                    const db = await new Promise((resolve, reject) => {
+                        const req = indexedDB.open(dbName, 1);
+                        req.onerror = () => reject(req.error);
+                        req.onsuccess = () => resolve(req.result);
+                        req.onupgradeneeded = (e) => {
+                            const db = e.target.result;
+                            if (!db.objectStoreNames.contains('keyvalue')) {
+                                db.createObjectStore('keyvalue');
+                            }
+                        };
+                    });
+
+                    const tx = db.transaction('keyvalue', 'readwrite');
+                    const store = tx.objectStore('keyvalue');
+                    const allKeys = await new Promise((resolve, reject) => {
+                        const req = store.getAllKeys();
+                        req.onerror = () => reject(req.error);
+                        req.onsuccess = () => resolve(req.result);
+                    });
+
+                    const toDelete = allKeys.filter(k => !String(k).startsWith('dir:microdesc:'));
+                    for (const key of toDelete) {
+                        store.delete(key);
+                    }
+
+                    await new Promise((resolve, reject) => {
+                        tx.oncomplete = () => resolve();
+                        tx.onerror = () => reject(tx.error);
+                    });
+
+                    const kept = allKeys.length - toDelete.length;
+                    debugOutput.className = 'output-box success';
+                    debugOutput.textContent = `Deleted ${toDelete.length} keys, kept ${kept} microdesc keys`;
+                    log.info(`Debug: deleted ${toDelete.length} state keys (kept ${kept} microdescs)`);
+                } catch (e) {
+                    debugOutput.className = 'output-box error';
+                    debugOutput.textContent = e.message || String(e);
+                    log.error('Debug: delete state failed: ' + (e.message || e));
+                }
+                deleteStateBtn.disabled = false;
+            });
+
+            // Debug: download zip of all persisted logs + current Tor state
+            downloadDebugBtn.addEventListener('click', async () => {
+                downloadDebugBtn.disabled = true;
+                debugOutput.className = 'output-box loading';
+                debugOutput.textContent = 'Building zip...';
+                try {
+                    const enc = new TextEncoder();
+
+                    // Collect all persisted log entries
+                    const logs = await getAllLogs();
+                    const logLines = logs.map(e => {
+                        const dt = new Date(e.ts).toISOString();
+                        const mark = e.session === SESSION_ID ? 'current' : 'prev';
+                        return `[${dt}] [${mark}] ${e.level.toUpperCase()}: ${e.msg}`;
+                    }).join('\n');
+
+                    // Collect all key-value pairs from the Tor state DB
+                    const stateDb = await new Promise((resolve, reject) => {
+                        const req = indexedDB.open('tor-js', 1);
+                        req.onerror = () => reject(req.error);
+                        req.onsuccess = () => resolve(req.result);
+                        req.onupgradeneeded = (e) => {
+                            const db = e.target.result;
+                            if (!db.objectStoreNames.contains('keyvalue')) {
+                                db.createObjectStore('keyvalue');
+                            }
+                        };
+                    });
+                    const stateEntries = await new Promise((resolve, reject) => {
+                        const tx = stateDb.transaction('keyvalue', 'readonly');
+                        const store = tx.objectStore('keyvalue');
+                        const keysReq = store.getAllKeys();
+                        keysReq.onsuccess = () => {
+                            const valsReq = store.getAll();
+                            valsReq.onsuccess = () => {
+                                const obj = {};
+                                keysReq.result.forEach((k, i) => { obj[k] = valsReq.result[i]; });
+                                resolve(obj);
+                            };
+                            valsReq.onerror = () => reject(valsReq.error);
+                        };
+                        keysReq.onerror = () => reject(keysReq.error);
+                    });
+                    const stateJson = JSON.stringify({
+                        version: 1,
+                        captured_at: new Date().toISOString(),
+                        entries: stateEntries,
+                    }, null, 2);
+
+                    const zipBlob = buildZip([
+                        { name: 'logs.txt',   data: enc.encode(logLines) },
+                        { name: 'state.json', data: enc.encode(stateJson) },
+                    ]);
+
+                    const url = URL.createObjectURL(zipBlob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `tor-js-debug-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+
+                    const nState = Object.keys(stateEntries).length;
+                    debugOutput.className = 'output-box success';
+                    debugOutput.textContent = `Downloaded: ${logs.length} log entries, ${nState} state keys`;
+                    log.info(`Debug: downloaded zip (${logs.length} logs, ${nState} state keys)`);
+                } catch (e) {
+                    debugOutput.className = 'output-box error';
+                    debugOutput.textContent = e.message || String(e);
+                    log.error('Debug: download zip failed: ' + (e.message || e));
+                }
+                downloadDebugBtn.disabled = false;
+            });
+
+            // Debug: load state from a previously downloaded debug zip
+            loadStateBtn.addEventListener('click', () => {
+                loadStateFile.value = '';
+                loadStateFile.click();
+            });
+
+            loadStateFile.addEventListener('change', async () => {
+                const file = loadStateFile.files[0];
+                if (!file) return;
+
+                loadStateBtn.disabled = true;
+                debugOutput.className = 'output-box loading';
+                debugOutput.textContent = 'Reading zip...';
+                try {
+                    const buf = await file.arrayBuffer();
+                    const files = readZip(buf);
+
+                    if (!files['state.json']) {
+                        throw new Error('No state.json found in zip');
+                    }
+
+                    const stateJson = JSON.parse(new TextDecoder().decode(files['state.json']));
+                    const entries = stateJson.entries;
+                    if (!entries || typeof entries !== 'object') {
+                        throw new Error('Invalid state.json: missing entries object');
+                    }
+
+                    const dbName = 'tor-js';
+                    const db = await new Promise((resolve, reject) => {
+                        const req = indexedDB.open(dbName, 1);
+                        req.onerror = () => reject(req.error);
+                        req.onsuccess = () => resolve(req.result);
+                        req.onupgradeneeded = (e) => {
+                            const db = e.target.result;
+                            if (!db.objectStoreNames.contains('keyvalue')) {
+                                db.createObjectStore('keyvalue');
+                            }
+                        };
+                    });
+
+                    const keys = Object.keys(entries);
+                    const tx = db.transaction('keyvalue', 'readwrite');
+                    const store = tx.objectStore('keyvalue');
+                    for (const key of keys) {
+                        store.put(entries[key], key);
+                    }
+
+                    await new Promise((resolve, reject) => {
+                        tx.oncomplete = () => resolve();
+                        tx.onerror = () => reject(tx.error);
+                    });
+
+                    debugOutput.className = 'output-box success';
+                    debugOutput.textContent = `Loaded ${keys.length} state keys from ${file.name} (captured ${stateJson.captured_at || 'unknown'})`;
+                    log.info(`Debug: loaded ${keys.length} state keys from ${file.name}`);
+                } catch (e) {
+                    debugOutput.className = 'output-box error';
+                    debugOutput.textContent = e.message || String(e);
+                    log.error('Debug: load state failed: ' + (e.message || e));
+                }
+                loadStateBtn.disabled = false;
+            });
+
+            // Load previous session logs before showing "Ready"
+            await loadPreviousLogs(logOutput);
+
+            let torClient = null;
+
+            statusEl.textContent = 'Ready to connect';
+            statusDot.className = 'status-dot';
+            log.info('Ready - click "Connect" to start');
+
+            // Default-gateway warning modal
+            const gatewayModal = document.getElementById('gatewayModal');
+            const gatewayModalUrl = document.getElementById('gatewayModalUrl');
+            const gatewayModalCancel = document.getElementById('gatewayModalCancel');
+            const gatewayModalContinue = document.getElementById('gatewayModalContinue');
+
+            function confirmDefaultGateway(gateway) {
+                return new Promise((resolve) => {
+                    gatewayModalUrl.textContent = gateway;
+                    gatewayModal.classList.add('open');
+                    gatewayModalContinue.focus();
+
+                    const cleanup = () => {
+                        gatewayModal.classList.remove('open');
+                        gatewayModalCancel.removeEventListener('click', onCancel);
+                        gatewayModalContinue.removeEventListener('click', onContinue);
+                        document.removeEventListener('keydown', onKey);
+                    };
+                    const onCancel = () => { cleanup(); resolve(false); };
+                    const onContinue = () => { cleanup(); resolve(true); };
+                    const onKey = (e) => {
+                        if (e.key === 'Escape') onCancel();
+                        else if (e.key === 'Enter') onContinue();
+                    };
+
+                    gatewayModalCancel.addEventListener('click', onCancel);
+                    gatewayModalContinue.addEventListener('click', onContinue);
+                    document.addEventListener('keydown', onKey);
+                });
+            }
+
+            connectBtn.addEventListener('click', async () => {
+                const gateway = gatewayUrlInput.value.trim();
+                if (!gateway) {
+                    log.error('Gateway URL is required');
+                    return;
+                }
+
+                if (gateway === DEFAULT_GATEWAY) {
+                    const proceed = await confirmDefaultGateway(gateway);
+                    if (!proceed) return;
+                }
+
+                connectBtn.disabled = true;
+                statusEl.textContent = 'Connecting...';
+                statusDot.className = 'status-dot loading';
+                log.info(`Connecting via gateway: ${gateway}...`);
+
+                try {
+                    const startTime = performance.now();
+                    torClient = new TorClient({
+                        gateway,
+                        log,
+                        logLevel: logLevelSelect.value,
+                    });
+                    await torClient.ready();
+
+                    const connectTime = ((performance.now() - startTime) / 1000).toFixed(1);
+                    statusEl.textContent = `Connected (${connectTime}s)`;
+                    statusDot.className = 'status-dot ready';
+                    log.info(`Connected in ${connectTime}s`);
+
+                    closeBtn.disabled = false;
+                    fetchBtn.disabled = false;
+
+                } catch (e) {
+                    statusEl.textContent = 'Connection failed';
+                    statusDot.className = 'status-dot error';
+                    log.error('Connection failed: ' + (e.message || e));
+                    connectBtn.disabled = false;
+                }
+            });
+
+            closeBtn.addEventListener('click', () => {
+                if (torClient) {
+                    torClient.close();
+                    log.info('Disconnected');
+                    torClient = null;
+                }
+                statusEl.textContent = 'Disconnected';
+                statusDot.className = 'status-dot';
+                connectBtn.disabled = false;
+                closeBtn.disabled = true;
+                fetchBtn.disabled = true;
+            });
+
+            fetchBtn.addEventListener('click', async () => {
+                const url = urlInput.value;
+
+                const validation = validateUrl(url);
+                if (!validation.valid) {
+                    fetchOutput.className = 'output-box error';
+                    fetchOutput.textContent = validation.error;
+                    return;
+                }
+
+                fetchOutput.className = 'output-box loading';
+                fetchOutput.textContent = 'Fetching...';
+                fetchBtn.disabled = true;
+                log.info(`Fetching ${url}...`);
+
+                try {
+                    const startTime = performance.now();
+                    const response = await torClient.fetch(url);
+                    const fetchTime = ((performance.now() - startTime) / 1000).toFixed(1);
+
+                    const text = await response.text();
+                    fetchOutput.className = 'output-box success';
+                    fetchOutput.textContent = `Status: ${response.status} (${fetchTime}s)\n\n${text.substring(0, 2000)}`;
+                    log.info(`Fetch complete: ${response.status} (${fetchTime}s, ${text.length} bytes)`);
+                } catch (e) {
+                    fetchOutput.className = 'output-box error';
+                    fetchOutput.textContent = e.message || String(e);
+                    log.error('Fetch failed: ' + (e.message || e));
+                }
+                fetchBtn.disabled = false;
+            });
+        }
+
+        // ── Main-thread sync checker ──────────────────────────────────────
+        // Reports when the main thread is blocked for >500ms.
+        {
+            let last = performance.now();
+            setInterval(() => {
+                const now = performance.now();
+                const dt = now - last;
+                last = now;
+                if (dt > 500) {
+                    log.warn(`[sync-check] Main thread blocked for ${dt.toFixed(0)}ms`);
+                }
+            }, 100);
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', run);
+        } else {
+            run();
+        }
+    </script>
+</body>
+</html>
