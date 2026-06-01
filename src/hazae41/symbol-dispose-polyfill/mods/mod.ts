@@ -1,1 +1,0 @@
-import './symbol-dispose-polyfill';
