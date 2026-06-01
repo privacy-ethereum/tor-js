@@ -4149,9 +4149,11 @@ name = "tor-js"
 version = "0.3.0"
 dependencies = [
  "arti-client",
+ "async-trait",
  "console_error_panic_hook",
  "digest 0.10.7",
  "futures",
+ "futures-channel",
  "futures-rustls",
  "getrandom 0.2.17",
  "getrandom 0.3.4",
@@ -4169,6 +4171,7 @@ dependencies = [
  "tor-async-utils",
  "tor-checkable",
  "tor-dirmgr",
+ "tor-general-addr",
  "tor-llcrypto",
  "tor-netdoc",
  "tor-persist",
@@ -4177,11 +4180,13 @@ dependencies = [
  "tracing-subscriber",
  "tracing-wasm",
  "url",
+ "void",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "wasm-streams",
  "web-sys",
+ "web-time-compat",
  "webpki-roots",
 ]
 

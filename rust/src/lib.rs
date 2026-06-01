@@ -32,6 +32,7 @@
 mod error;
 mod fast_bootstrap;
 mod fetch;
+mod runtime;
 mod storage;
 
 pub use storage::{JsStorage, JsStorageInterface, CachedJsStorage};
@@ -45,7 +46,7 @@ use std::sync::Arc;
 use arti_client::config::CfgPath;
 use arti_client::{TorClient as ArtiTorClient, TorClientConfig};
 use serde::Deserialize;
-use tor_rtcompat::wasm::WasmRuntime;
+use crate::runtime::WasmRuntime;
 use tracing::{debug, info, error};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;

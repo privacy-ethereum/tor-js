@@ -26,6 +26,9 @@ tor-llcrypto = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae6
 tor-netdoc = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
 tor-checkable = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
 tor-async-utils = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
+# Used by the WASM runtime (src/runtime.rs), moved here from tor-rtcompat::wasm.
+tor-general-addr = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
+web-time-compat = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
 digest = "0.10"
 
 # TLS for HTTPS over DataStream (rustls with pure-Rust crypto for WASM)
@@ -58,7 +61,10 @@ serde-wasm-bindgen = "0.6"
 
 # Async runtime
 futures = "0.3"
+futures-channel = "0.3"
 gloo-timers = { version = "0.3", features = ["futures"] }
+async-trait = "0.1.54"
+void = "1"
 
 # Logging
 tracing = "0.1"
