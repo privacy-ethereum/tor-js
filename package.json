@@ -1,0 +1,72 @@
+{
+  "name": "tor-js",
+  "version": "0.3.0",
+  "description": "TypeScript Tor client using arti via WASM",
+  "type": "module",
+  "main": "dist/entryPoints/wasm-cdn/index.js",
+  "types": "dist/entryPoints/wasm-cdn/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/entryPoints/wasm-cdn/index.d.ts",
+      "import": "./dist/entryPoints/wasm-cdn/index.js"
+    },
+    "./wasm-cdn": {
+      "types": "./dist/entryPoints/wasm-cdn/index.d.ts",
+      "import": "./dist/entryPoints/wasm-cdn/index.js"
+    },
+    "./wasm-file": {
+      "types": "./dist/entryPoints/wasm-file/index.d.ts",
+      "import": "./dist/entryPoints/wasm-file/index.js"
+    },
+    "./wasm-base64": {
+      "types": "./dist/entryPoints/wasm-base64/index.d.ts",
+      "import": "./dist/entryPoints/wasm-base64/index.js"
+    },
+    "./singleton": {
+      "types": "./dist/entryPoints/wasm-cdn/singleton.d.ts",
+      "import": "./dist/entryPoints/wasm-cdn/singleton.js"
+    },
+    "./wasm-cdn/singleton": {
+      "types": "./dist/entryPoints/wasm-cdn/singleton.d.ts",
+      "import": "./dist/entryPoints/wasm-cdn/singleton.js"
+    },
+    "./wasm-file/singleton": {
+      "types": "./dist/entryPoints/wasm-file/singleton.d.ts",
+      "import": "./dist/entryPoints/wasm-file/singleton.js"
+    },
+    "./wasm-base64/singleton": {
+      "types": "./dist/entryPoints/wasm-base64/singleton.d.ts",
+      "import": "./dist/entryPoints/wasm-base64/singleton.js"
+    }
+  },
+  "imports": {
+    "#wasm": "./dist/wasm-pkg/tor_js.js",
+    "#wasm-base64-data": "./dist/wasm-base64-data.js"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "build:release": "bash scripts/build.sh --release",
+    "build:wasm": "wasm-pack build rust --target web",
+    "build:ts": "node build.mjs",
+    "clean": "rm -rf dist rust/pkg rust/target"
+  },
+  "author": "Andrew Morris",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/voltrevo/tor-js.git"
+  },
+  "homepage": "https://github.com/voltrevo/tor-js",
+  "bugs": {
+    "url": "https://github.com/voltrevo/tor-js/issues"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "tsup": "^8.3.5",
+    "typescript": "~5.7.3"
+  }
+}

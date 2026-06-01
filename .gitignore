@@ -1,0 +1,8 @@
+# Node / TypeScript
+node_modules/
+dist/
+*.generated.*
+
+# Rust / wasm-pack
+rust/target/
+rust/pkg/

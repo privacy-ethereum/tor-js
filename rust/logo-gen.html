@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Logo Generator</title>
+<style>
+  body { margin: 20px; font-family: sans-serif; background: #1a1922; color: #f8f8f2; }
+  canvas { border: 1px solid #454158; display: block; max-width: 100%; }
+  button { margin-top: 12px; padding: 10px 20px; background: #9580FF; color: #1a1922; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1900" height="1060"></canvas>
+<button onclick="download()">Download AVIF</button>
+<script>
+const W = 1900, H = 1060;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// Background
+ctx.fillStyle = '#2d2b3a';
+ctx.fillRect(0, 0, W, H);
+
+// Draw onion logo
+function drawLogo(cx, cy, r) {
+  // Gradient fill
+  const grad = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+  grad.addColorStop(0, '#7d33b8');
+  grad.addColorStop(1, '#9a4fd1');
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Concentric rings
+  ctx.strokeStyle = 'white';
+  ctx.lineWidth = r * 0.066;
+  for (const ratio of [0.778, 0.556, 0.333]) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * ratio, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Center dot
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.089, 0, Math.PI * 2);
+  ctx.fillStyle = 'white';
+  ctx.fill();
+}
+
+// Adjust this single value to scale everything (1.0 = baseline)
+const SCALE = 1.4;
+
+const logoR = 200 * SCALE;
+const logoD = logoR * 2;
+const gap = 70 * SCALE;
+const fontSize = 220 * SCALE;
+
+ctx.font = `800 ${fontSize}px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+const textMetrics = ctx.measureText('tor-js');
+const textW = textMetrics.width;
+
+const totalW = logoD + gap + textW;
+const startX = (W - totalW) / 2;
+const logoCX = startX + logoR;
+const logoCY = H / 2;
+const textX = startX + logoD + gap;
+
+drawLogo(logoCX, logoCY, logoR);
+
+// Gradient text
+const textGrad = ctx.createLinearGradient(textX, logoCY - fontSize / 2, textX + textW, logoCY + fontSize / 2);
+textGrad.addColorStop(0, '#9580FF');
+textGrad.addColorStop(1, '#FF80BF');
+
+ctx.font = `800 ${fontSize}px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+ctx.fillStyle = textGrad;
+ctx.textBaseline = 'middle';
+ctx.fillText('tor-js', textX, logoCY);
+
+function download() {
+  canvas.toBlob(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'tor-js.avif';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }, 'image/avif', 0.7);
+}
+</script>
+</body>
+</html>

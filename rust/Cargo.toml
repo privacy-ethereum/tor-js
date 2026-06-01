@@ -1,0 +1,99 @@
+[package]
+name = "tor-js"
+version = "0.3.0"
+edition = "2021"
+authors = ["Arti Contributors"]
+license = "MIT OR Apache-2.0"
+description = "WebAssembly bindings for arti-client Tor functionality"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Arti crates come from the voltrevo/arti fork, pinned to a commit. These are
+# the fork's WASM-capable variants (WasmRuntime, custom storage, zstd-wasm,
+# etc.) and are not published to crates.io. This crate used to live inside that
+# repo at crates/tor-js; see git history of voltrevo/arti for the originals.
+# Core arti-client (no bridge/PT needed — connects to regular relays via WS proxy)
+arti-client = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141", default-features = false, features = [
+    "experimental-api",
+]}
+tor-rtcompat = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141", default-features = false }
+tor-persist = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141", default-features = false }
+tor-dirmgr = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141", default-features = false, features = ["zstd-wasm"] }
+tor-llcrypto = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
+tor-netdoc = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
+tor-checkable = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
+tor-async-utils = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
+digest = "0.10"
+
+# TLS for HTTPS over DataStream (rustls with pure-Rust crypto for WASM)
+futures-rustls = { version = "0.26", default-features = false, features = ["tls12", "logging"] }
+rustls-rustcrypto = "0.0.2-alpha"
+webpki-roots = "1"
+rustls-pki-types = { version = "1", features = ["web"] }
+
+# HTTP support
+http = "1.1"
+url = "2.5"
+
+# WASM bindings
+send_wrapper = "0.6"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3.69", features = [
+    "AbortSignal",
+    "Crypto",
+    "SubtleCrypto",
+    "console",
+    "Headers",
+    "ReadableStream",
+    "Response",
+    "ResponseInit",
+] }
+wasm-streams = "0.4"
+serde-wasm-bindgen = "0.6"
+
+# Async runtime
+futures = "0.3"
+gloo-timers = { version = "0.3", features = ["futures"] }
+
+# Logging
+tracing = "0.1"
+tracing-wasm = "0.2"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
+
+# Error handling
+console_error_panic_hook = "0.1"
+
+# Random number generation
+# These entries are not used directly in code. As the WASM binary root, tor-js must enable
+# the JS backend feature on every getrandom version present in the dep graph, because
+# getrandom needs to call crypto.getRandomValues() on WASM instead of OS primitives.
+# Cargo's feature unification propagates the feature to all transitive users of each version.
+# Three versions are needed because different parts of the dep graph haven't converged yet:
+#   0.2 (js):     rand_core 0.6.4 → getrandom 0.2  (rustls-rustcrypto + tor-llcrypto's rand_core_06 compat alias)
+#   0.3 (wasm_js): tor-basic-utils, uuid, rand_core 0.9.x, etc.
+#   0.4 (wasm_js): tor-bytes and tor-llcrypto list it directly under [target.wasm32-unknown-unknown.dependencies]
+# consolidate on 0.4 once older versions are gone:
+#   drop 0.2 once rustls-rustcrypto updates to rand_core 0.9+ and tor-llcrypto drops rand_core_06;
+#   drop 0.3 once tor-basic-utils, uuid, etc. update to getrandom 0.4.
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false
