@@ -4,7 +4,7 @@ Make HTTP requests through Tor from JavaScript. Works in browsers and Node.js.
 
 Uses [Arti](https://gitlab.torproject.org/tpo/core/arti) (the Tor Project's Rust implementation) compiled to WebAssembly.
 
-**[Live Demo](https://voltrevo.github.io/arti/)**
+**[Live Demo](https://voltrevo.github.io/tor-js/)**
 
 ## Status
 
