@@ -92,6 +92,20 @@ hex = "0.4"
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
+# When this crate lived in the arti workspace it inherited these from the
+# workspace root's [profile.release]. As a standalone crate it's the build
+# root, so it must declare them itself — otherwise Cargo's defaults
+# (lto = false, codegen-units = 16) produce a ~20% larger WASM binary before
+# wasm-opt even runs. Matches voltrevo/arti's root Cargo.toml.
+[profile.release]
+lto = true
+codegen-units = 1
+
+# Matches voltrevo/arti's root Cargo.toml: slotmap-careful's safety checks
+# rely on not being over-optimized, so it's pinned to opt-level 2.
+[profile.release.package.slotmap-careful]
+opt-level = 2
+
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
 
