@@ -13,7 +13,7 @@
 //!
 //! // Create client options with gateway URL
 //! const options = new TorClientOptions(
-//!   'https://tor-js-gateway.voltrevo.com'
+//!   'https://tor-js-gateway.pse.dev'
 //! );
 //!
 //! // Create the Tor client (async)
