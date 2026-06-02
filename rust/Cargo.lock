@@ -122,8 +122,8 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "arti-client"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "async-trait",
  "cfg-if",
@@ -139,7 +139,7 @@ dependencies = [
  "libc",
  "once_cell",
  "postage",
- "rand 0.9.4",
+ "rand 0.10.1",
  "safelog",
  "serde",
  "tempfile",
@@ -410,7 +410,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 [[package]]
 name = "caret"
 version = "0.9.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 
 [[package]]
 name = "cast"
@@ -446,13 +446,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "chacha20"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.0",
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "chacha20poly1305"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10cd79432192d1c0f4e1a0fef9527696cc039165d729fb41b3f4f4f354c2dc35"
 dependencies = [
  "aead",
- "chacha20",
+ "chacha20 0.9.1",
  "cipher",
  "poly1305",
  "zeroize",
@@ -1234,8 +1245,8 @@ dependencies = [
 
 [[package]]
 name = "fs-mistrust"
-version = "0.14.1"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.14.2"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive_builder_fork_arti",
  "dirs",
@@ -1243,16 +1254,18 @@ dependencies = [
  "pwd-grp",
  "serde",
  "thiserror 2.0.18",
+ "void",
  "walkdir",
 ]
 
 [[package]]
 name = "fslock-guard"
-version = "0.6.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.7.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
+ "libc",
  "thiserror 2.0.18",
- "winapi",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1408,6 +1421,7 @@ dependencies = [
  "js-sys",
  "libc",
  "r-efi 6.0.0",
+ "rand_core 0.10.1",
  "wasip2",
  "wasip3",
  "wasm-bindgen",
@@ -2172,7 +2186,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 [[package]]
 name = "oneshot-fused-workaround"
 version = "0.6.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "futures",
 ]
@@ -2591,12 +2605,13 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.4"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
+checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
- "rand_chacha 0.9.0",
- "rand_core 0.9.5",
+ "chacha20 0.10.0",
+ "getrandom 0.4.2",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -2611,12 +2626,12 @@ dependencies = [
 
 [[package]]
 name = "rand_chacha"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
+checksum = "3e6af7f3e25ded52c41df4e0b1af2d047e45896c2f3281792ed68a1c243daedb"
 dependencies = [
  "ppv-lite86",
- "rand_core 0.9.5",
+ "rand_core 0.10.1",
 ]
 
 [[package]]
@@ -2630,22 +2645,19 @@ dependencies = [
 
 [[package]]
 name = "rand_core"
-version = "0.9.5"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
-dependencies = [
- "getrandom 0.3.4",
-]
+checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rand_jitter"
-version = "0.5.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b16df48f071248e67b8fc5e866d9448d45c08ad8b672baaaf796e2f15e606ff0"
+checksum = "3fdcd80e68f0a8f9ca5ec7cfd02fd5fbb8fbe6ef4e9b90ea2f48bb929b74f88e"
 dependencies = [
  "libc",
- "rand_core 0.9.5",
- "winapi",
+ "rand_core 0.10.1",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2727,9 +2739,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "reseeding_rng"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35d8fa137e1f0bbc1139893fcf4fff5f099d76658e6da2b10fadd04f0cadc2d4"
+dependencies = [
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "retry-error"
 version = "0.12.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "humantime",
  "web-time",
@@ -2931,7 +2952,7 @@ dependencies = [
 [[package]]
 name = "safelog"
 version = "0.8.2"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive_more",
  "educe",
@@ -3254,7 +3275,7 @@ dependencies = [
 [[package]]
 name = "slotmap-careful"
 version = "0.7.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "paste",
  "serde",
@@ -3679,8 +3700,8 @@ checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
 
 [[package]]
 name = "tor-async-utils"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive-deftly",
  "educe",
@@ -3694,8 +3715,8 @@ dependencies = [
 
 [[package]]
 name = "tor-basic-utils"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive_more",
  "getrandom 0.4.2",
@@ -3703,8 +3724,8 @@ dependencies = [
  "itertools",
  "libc",
  "paste",
- "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand 0.10.1",
+ "rand_chacha 0.10.0",
  "serde",
  "slab",
  "smallvec",
@@ -3715,8 +3736,8 @@ dependencies = [
 
 [[package]]
 name = "tor-bytes"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "bytes",
  "derive-deftly",
@@ -3732,8 +3753,8 @@ dependencies = [
 
 [[package]]
 name = "tor-cell"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "amplify",
  "bitflags",
@@ -3744,7 +3765,7 @@ dependencies = [
  "educe",
  "itertools",
  "paste",
- "rand 0.9.4",
+ "rand 0.10.1",
  "smallvec",
  "thiserror 2.0.18",
  "tor-basic-utils",
@@ -3761,8 +3782,8 @@ dependencies = [
 
 [[package]]
 name = "tor-cert"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "caret",
  "derive_builder_fork_arti",
@@ -3778,8 +3799,8 @@ dependencies = [
 
 [[package]]
 name = "tor-chanmgr"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "async-trait",
  "base64ct",
@@ -3793,7 +3814,7 @@ dependencies = [
  "oneshot-fused-workaround",
  "percent-encoding",
  "postage",
- "rand 0.9.4",
+ "rand 0.10.1",
  "safelog",
  "serde",
  "serde_with",
@@ -3820,8 +3841,8 @@ dependencies = [
 
 [[package]]
 name = "tor-checkable"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "humantime",
  "signature",
@@ -3832,8 +3853,8 @@ dependencies = [
 
 [[package]]
 name = "tor-circmgr"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "amplify",
  "async-trait",
@@ -3850,7 +3871,7 @@ dependencies = [
  "once_cell",
  "oneshot-fused-workaround",
  "pin-project",
- "rand 0.9.4",
+ "rand 0.10.1",
  "retry-error",
  "safelog",
  "serde",
@@ -3881,8 +3902,8 @@ dependencies = [
 
 [[package]]
 name = "tor-config"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "amplify",
  "cfg-if",
@@ -3914,8 +3935,8 @@ dependencies = [
 
 [[package]]
 name = "tor-config-path"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "directories",
  "serde",
@@ -3927,8 +3948,8 @@ dependencies = [
 
 [[package]]
 name = "tor-consdiff"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive_more",
  "digest 0.10.7",
@@ -3943,8 +3964,8 @@ dependencies = [
 
 [[package]]
 name = "tor-dirclient"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "async-compression",
  "base64ct",
@@ -3971,8 +3992,8 @@ dependencies = [
 
 [[package]]
 name = "tor-dircommon"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "base64ct",
  "derive-deftly",
@@ -3991,8 +4012,8 @@ dependencies = [
 
 [[package]]
 name = "tor-dirmgr"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "async-trait",
  "base64ct",
@@ -4012,7 +4033,7 @@ dependencies = [
  "oneshot-fused-workaround",
  "paste",
  "postage",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rusqlite",
  "safelog",
  "scopeguard",
@@ -4047,8 +4068,8 @@ dependencies = [
 
 [[package]]
 name = "tor-error"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive_more",
  "futures",
@@ -4064,8 +4085,8 @@ dependencies = [
 
 [[package]]
 name = "tor-general-addr"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive_more",
  "thiserror 2.0.18",
@@ -4074,8 +4095,8 @@ dependencies = [
 
 [[package]]
 name = "tor-guardmgr"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "amplify",
  "base64ct",
@@ -4092,7 +4113,7 @@ dependencies = [
  "oneshot-fused-workaround",
  "pin-project",
  "postage",
- "rand 0.9.4",
+ "rand 0.10.1",
  "safelog",
  "serde",
  "strum",
@@ -4117,8 +4138,8 @@ dependencies = [
 
 [[package]]
 name = "tor-hscrypto"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "data-encoding",
  "derive-deftly",
@@ -4128,7 +4149,7 @@ dependencies = [
  "humantime",
  "itertools",
  "paste",
- "rand 0.9.4",
+ "rand 0.10.1",
  "safelog",
  "serde",
  "signature",
@@ -4192,14 +4213,14 @@ dependencies = [
 
 [[package]]
 name = "tor-key-forge"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive-deftly",
  "derive_more",
  "downcast-rs",
  "paste",
- "rand 0.9.4",
+ "rand 0.10.1",
  "rsa",
  "signature",
  "ssh-key-fork-arti",
@@ -4213,8 +4234,8 @@ dependencies = [
 
 [[package]]
 name = "tor-keymgr"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "amplify",
  "arrayvec",
@@ -4229,7 +4250,7 @@ dependencies = [
  "humantime",
  "inventory",
  "itertools",
- "rand 0.9.4",
+ "rand 0.10.1",
  "safelog",
  "serde",
  "signature",
@@ -4253,8 +4274,8 @@ dependencies = [
 
 [[package]]
 name = "tor-linkspec"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "base64ct",
  "by_address",
@@ -4279,8 +4300,8 @@ dependencies = [
 
 [[package]]
 name = "tor-llcrypto"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "aes",
  "base64ct",
@@ -4296,12 +4317,13 @@ dependencies = [
  "getrandom 0.3.4",
  "getrandom 0.4.2",
  "hex",
- "rand 0.9.4",
- "rand_chacha 0.9.0",
+ "rand 0.10.1",
+ "rand_chacha 0.10.0",
+ "rand_core 0.10.1",
  "rand_core 0.6.4",
- "rand_core 0.9.5",
  "rand_jitter",
  "rdrand",
+ "reseeding_rng",
  "rsa",
  "safelog",
  "serde",
@@ -4320,8 +4342,8 @@ dependencies = [
 
 [[package]]
 name = "tor-log-ratelim"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "futures",
  "humantime",
@@ -4335,8 +4357,8 @@ dependencies = [
 
 [[package]]
 name = "tor-memquota"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "cfg-if",
  "derive-deftly",
@@ -4365,8 +4387,8 @@ dependencies = [
 
 [[package]]
 name = "tor-memquota-cost"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive-deftly",
  "itertools",
@@ -4376,8 +4398,8 @@ dependencies = [
 
 [[package]]
 name = "tor-netdir"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -4386,7 +4408,7 @@ dependencies = [
  "humantime",
  "itertools",
  "num_enum",
- "rand 0.9.4",
+ "rand 0.10.1",
  "serde",
  "strum",
  "thiserror 2.0.18",
@@ -4404,8 +4426,8 @@ dependencies = [
 
 [[package]]
 name = "tor-netdoc"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "amplify",
  "base64ct",
@@ -4423,7 +4445,7 @@ dependencies = [
  "memchr",
  "paste",
  "phf",
- "rand 0.9.4",
+ "rand 0.10.1",
  "saturating-time",
  "serde",
  "serde_with",
@@ -4449,8 +4471,8 @@ dependencies = [
 
 [[package]]
 name = "tor-persist"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive-deftly",
  "derive_more",
@@ -4476,8 +4498,8 @@ dependencies = [
 
 [[package]]
 name = "tor-proto"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "amplify",
  "async-trait",
@@ -4504,8 +4526,8 @@ dependencies = [
  "oneshot-fused-workaround",
  "pin-project",
  "postage",
- "rand 0.9.4",
- "rand_core 0.9.5",
+ "rand 0.10.1",
+ "rand_core 0.10.1",
  "safelog",
  "slotmap-careful",
  "smallvec",
@@ -4540,8 +4562,8 @@ dependencies = [
 
 [[package]]
 name = "tor-protover"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "caret",
  "paste",
@@ -4553,10 +4575,10 @@ dependencies = [
 
 [[package]]
 name = "tor-relay-selection"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
- "rand 0.9.4",
+ "rand 0.10.1",
  "serde",
  "tor-basic-utils",
  "tor-linkspec",
@@ -4566,14 +4588,16 @@ dependencies = [
 
 [[package]]
 name = "tor-rtcompat"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
+ "amplify",
  "async-trait",
  "async_executors",
  "asynchronous-codec",
  "cfg-if",
  "coarsetime",
+ "derive_builder_fork_arti",
  "derive_more",
  "dyn-clone",
  "educe",
@@ -4604,8 +4628,8 @@ dependencies = [
 
 [[package]]
 name = "tor-rtmock"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "amplify",
  "assert_matches",
@@ -4633,8 +4657,8 @@ dependencies = [
 
 [[package]]
 name = "tor-socksproto"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "amplify",
  "caret",
@@ -4649,8 +4673,8 @@ dependencies = [
 
 [[package]]
 name = "tor-units"
-version = "0.42.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+version = "0.43.0"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "derive-deftly",
  "derive_more",
@@ -5089,7 +5113,7 @@ dependencies = [
 [[package]]
 name = "web-time-compat"
 version = "0.1.0"
-source = "git+https://github.com/voltrevo/arti?rev=f4ab7923649ae64c146fb7290de9b46ab1f90141#f4ab7923649ae64c146fb7290de9b46ab1f90141"
+source = "git+https://github.com/voltrevo/arti?rev=68c56a580b57366af16cc57e7b5ce4939db33ffe#68c56a580b57366af16cc57e7b5ce4939db33ffe"
 dependencies = [
  "web-time",
 ]
@@ -5240,6 +5264,15 @@ name = "windows-sys"
 version = "0.52.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d"
+dependencies = [
+ "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.59.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e38bc4d79ed67fd075bcc251a1c39b32a1776bbe92e5bef1f0bf1f8c531853b"
 dependencies = [
  "windows-targets 0.52.6",
 ]

@@ -27,8 +27,8 @@ impl<F: Future> Future for SendFut<F> {
 // fork. The traits below are re-exported at the tor_rtcompat crate root...
 use tor_rtcompat::{
     Blocking, CertifiedConn, CoarseInstant, CoarseTimeProvider, NetStreamListener,
-    NetStreamProvider, RealCoarseTimeProvider, SleepProvider, StreamOps, TlsProvider, UdpProvider,
-    UdpSocket,
+    NetStreamProvider, RealCoarseTimeProvider, SleepProvider, StreamOps, TcpListenOptions,
+    TlsProvider, UdpProvider, UdpSocket, UnixListenOptions,
 };
 // ...while these TLS traits are only reachable via the public `tls` submodule.
 use tor_rtcompat::tls::{TlsAcceptorSettings, TlsConnector};
@@ -428,6 +428,7 @@ impl NetStreamListener<unix::SocketAddr> for StubListener {
 impl NetStreamProvider<SocketAddr> for WasmRuntime {
     type Stream = JsProxyStream;
     type Listener = StubListener;
+    type ListenOptions = TcpListenOptions;
 
     async fn connect(&self, addr: &SocketAddr) -> IoResult<Self::Stream> {
         let connect_fn = self.connect_fn.as_ref().ok_or_else(|| {
@@ -456,7 +457,11 @@ impl NetStreamProvider<SocketAddr> for WasmRuntime {
         JsProxyStream::wrap(socket)
     }
 
-    async fn listen(&self, _addr: &SocketAddr) -> IoResult<Self::Listener> {
+    async fn listen(
+        &self,
+        _addr: &SocketAddr,
+        _options: &Self::ListenOptions,
+    ) -> IoResult<Self::Listener> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "WasmRuntime does not support listening on TCP sockets",
@@ -468,6 +473,7 @@ impl NetStreamProvider<SocketAddr> for WasmRuntime {
 impl NetStreamProvider<unix::SocketAddr> for WasmRuntime {
     type Stream = JsProxyStream;
     type Listener = StubListener;
+    type ListenOptions = UnixListenOptions;
 
     async fn connect(&self, _addr: &unix::SocketAddr) -> IoResult<Self::Stream> {
         Err(io::Error::new(
@@ -476,7 +482,11 @@ impl NetStreamProvider<unix::SocketAddr> for WasmRuntime {
         ))
     }
 
-    async fn listen(&self, _addr: &unix::SocketAddr) -> IoResult<Self::Listener> {
+    async fn listen(
+        &self,
+        _addr: &unix::SocketAddr,
+        _options: &Self::ListenOptions,
+    ) -> IoResult<Self::Listener> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "WasmRuntime does not support Unix sockets",

@@ -16,19 +16,19 @@ crate-type = ["cdylib", "rlib"]
 # etc.) and are not published to crates.io. This crate used to live inside that
 # repo at crates/tor-js; see git history of voltrevo/arti for the originals.
 # Core arti-client (no bridge/PT needed — connects to regular relays via WS proxy)
-arti-client = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141", default-features = false, features = [
+arti-client = { git = "https://github.com/voltrevo/arti", rev = "68c56a580b57366af16cc57e7b5ce4939db33ffe", default-features = false, features = [
     "experimental-api",
 ]}
-tor-rtcompat = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141", default-features = false }
-tor-persist = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141", default-features = false }
-tor-dirmgr = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141", default-features = false, features = ["zstd-wasm"] }
-tor-llcrypto = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
-tor-netdoc = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
-tor-checkable = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
-tor-async-utils = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
+tor-rtcompat = { git = "https://github.com/voltrevo/arti", rev = "68c56a580b57366af16cc57e7b5ce4939db33ffe", default-features = false }
+tor-persist = { git = "https://github.com/voltrevo/arti", rev = "68c56a580b57366af16cc57e7b5ce4939db33ffe", default-features = false }
+tor-dirmgr = { git = "https://github.com/voltrevo/arti", rev = "68c56a580b57366af16cc57e7b5ce4939db33ffe", default-features = false, features = ["zstd-wasm"] }
+tor-llcrypto = { git = "https://github.com/voltrevo/arti", rev = "68c56a580b57366af16cc57e7b5ce4939db33ffe" }
+tor-netdoc = { git = "https://github.com/voltrevo/arti", rev = "68c56a580b57366af16cc57e7b5ce4939db33ffe" }
+tor-checkable = { git = "https://github.com/voltrevo/arti", rev = "68c56a580b57366af16cc57e7b5ce4939db33ffe" }
+tor-async-utils = { git = "https://github.com/voltrevo/arti", rev = "68c56a580b57366af16cc57e7b5ce4939db33ffe" }
 # Used by the WASM runtime (src/runtime.rs), moved here from tor-rtcompat::wasm.
-tor-general-addr = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
-web-time-compat = { git = "https://github.com/voltrevo/arti", rev = "f4ab7923649ae64c146fb7290de9b46ab1f90141" }
+tor-general-addr = { git = "https://github.com/voltrevo/arti", rev = "68c56a580b57366af16cc57e7b5ce4939db33ffe" }
+web-time-compat = { git = "https://github.com/voltrevo/arti", rev = "68c56a580b57366af16cc57e7b5ce4939db33ffe" }
 digest = "0.10"
 
 # TLS for HTTPS over DataStream (rustls with pure-Rust crypto for WASM)

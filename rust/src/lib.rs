@@ -433,7 +433,7 @@ async fn create_client(options: TorClientOptions) -> Result<TorClient, JsValue> 
     info!("Bootstrap complete!");
 
     Ok(TorClient {
-        inner: Some(Arc::new(tor_client)),
+        inner: Some(tor_client),
         tls_config: make_tls_config(),
     })
 }
