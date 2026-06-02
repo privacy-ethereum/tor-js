@@ -58,11 +58,11 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/voltrevo/tor-js.git"
+    "url": "git+https://github.com/privacy-ethereum/tor-js.git"
   },
-  "homepage": "https://github.com/voltrevo/tor-js",
+  "homepage": "https://github.com/privacy-ethereum/tor-js",
   "bugs": {
-    "url": "https://github.com/voltrevo/tor-js/issues"
+    "url": "https://github.com/privacy-ethereum/tor-js/issues"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",

@@ -4,15 +4,15 @@ Make HTTP requests through Tor from JavaScript. Works in browsers and Node.js.
 
 Uses [Arti](https://gitlab.torproject.org/tpo/core/arti) (the Tor Project's Rust implementation) compiled to WebAssembly.
 
-**[Live Demo](https://voltrevo.github.io/tor-js/)**
+**[Live Demo](https://privacy-ethereum.github.io/tor-js/)**
 
 ## Status
 
-[Experimental](https://github.com/voltrevo/tor-js/issues/6).
+[Experimental](https://github.com/privacy-ethereum/tor-js/issues/6).
 
 It is your responsibilty to decide whether tor-js meets your security requirements. This software is provided for free and without warranty, per the MIT license.
 
-Please reach out ([on github](https://github.com/voltrevo/tor-js/issues/6) or otherwise) if you'd like to see more security validation for tor-js.
+Please reach out ([on github](https://github.com/privacy-ethereum/tor-js/issues/6) or otherwise) if you'd like to see more security validation for tor-js.
 
 ## Quick start
 
