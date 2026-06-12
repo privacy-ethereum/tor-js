@@ -31,24 +31,117 @@ pub struct NewPeer {
     pub peer_ip: IpAddr,
 }
 
-/// Messages from TCP bridge tasks back to the UDP event loop.
-enum TcpMsg {
-    /// Data read from TCP, to be written to the data channel.
-    Data(ChannelId, Vec<u8>),
-    /// TCP connection closed or errored.
-    Closed(ChannelId),
+/// How many TCP-read chunks (up to 16 KiB each) may queue per channel before
+/// the TCP reader task blocks, closing the kernel receive window upstream.
+const TCP_TO_DC_QUEUE: usize = 16;
+
+/// How many data-channel messages may queue toward a slow TCP write before we
+/// give up and close the channel (dropping data would corrupt the stream).
+const DC_TO_TCP_QUEUE: usize = 256;
+
+/// Bridge between one data channel and its TCP connection.
+struct ChannelBridge {
+    label: String,
+    /// DC -> TCP: data channel bytes headed for the TCP task.
+    to_tcp: mpsc::Sender<Vec<u8>>,
+    /// TCP -> DC: bytes read from TCP, written to the data channel as the
+    /// SCTP send buffer allows. The sender side dropping means TCP closed.
+    from_tcp: mpsc::Receiver<Vec<u8>>,
+    /// A chunk the SCTP send buffer didn't accept yet (write returned false).
+    pending: Option<Vec<u8>>,
 }
 
 /// Per-peer state in the UDP event loop.
 struct Peer {
     rtc: Rtc,
     peer_ip: IpAddr,
-    /// Data channel ID -> (label, sender for writing data channel bytes to TCP).
-    channels: HashMap<ChannelId, (String, mpsc::Sender<Vec<u8>>)>,
+    /// Data channel ID -> TCP bridge state.
+    channels: HashMap<ChannelId, ChannelBridge>,
     /// The `_signal` control channel, if open.
     signal_cid: Option<ChannelId>,
     created_at: Instant,
     last_activity: Instant,
+}
+
+impl Peer {
+    /// Close a data channel: remove its bridge, close it in the Rtc, notify
+    /// the client via the signal channel, and release the connection slot.
+    fn close_channel(&mut self, cid: ChannelId, connection_tracker: &ConnectionTracker) {
+        let Some(bridge) = self.channels.remove(&cid) else {
+            return;
+        };
+        let sctp_id = self
+            .rtc
+            .direct_api()
+            .sctp_stream_id_by_channel_id(cid)
+            .unwrap_or(0);
+        self.rtc.direct_api().close_data_channel(cid);
+        if let Some(sig_cid) = self.signal_cid {
+            if let Some(mut ch) = self.rtc.channel(sig_cid) {
+                let msg = serde_json::json!({
+                    "type": "closed",
+                    "channel": bridge.label,
+                    "sctp_id": sctp_id,
+                });
+                let _ = ch.write(false, msg.to_string().as_bytes());
+            }
+        }
+        connection_tracker.release(self.peer_ip);
+        debug!(
+            "rtc: closed channel {:?} ({}) for peer {}",
+            cid, bridge.label, self.peer_ip
+        );
+    }
+
+    /// Pump queued TCP data into data channels, respecting SCTP send-buffer
+    /// backpressure. Returns channels whose TCP side has finished (all data
+    /// flushed) so the caller can close them.
+    fn flush_bridges(&mut self) -> Vec<ChannelId> {
+        let mut done: Vec<ChannelId> = Vec::new();
+        let Peer {
+            rtc,
+            channels,
+            last_activity,
+            ..
+        } = self;
+        for (cid, bridge) in channels.iter_mut() {
+            loop {
+                let chunk = match bridge.pending.take() {
+                    Some(c) => c,
+                    None => match bridge.from_tcp.try_recv() {
+                        Ok(c) => c,
+                        Err(mpsc::error::TryRecvError::Empty) => break,
+                        Err(mpsc::error::TryRecvError::Disconnected) => {
+                            // TCP closed and every chunk has been written.
+                            done.push(*cid);
+                            break;
+                        }
+                    },
+                };
+                let Some(mut ch) = rtc.channel(*cid) else {
+                    // Channel no longer writable; drop the bridge.
+                    done.push(*cid);
+                    break;
+                };
+                match ch.write(true, &chunk) {
+                    Ok(true) => {
+                        *last_activity = Instant::now();
+                    }
+                    Ok(false) => {
+                        // SCTP send buffer full — retry after the browser acks.
+                        bridge.pending = Some(chunk);
+                        break;
+                    }
+                    Err(e) => {
+                        debug!("rtc: write to channel {:?} failed: {}", cid, e);
+                        done.push(*cid);
+                        break;
+                    }
+                }
+            }
+        }
+        done
+    }
 }
 
 /// HTTP handler for `POST /rtc/connect` — SDP offer/answer signaling.
@@ -166,8 +259,13 @@ pub async fn run_udp_loop(
     has_ipv6: bool,
 ) {
     let mut peers: Vec<Peer> = Vec::new();
-    let (tcp_tx, mut tcp_rx) = mpsc::channel::<TcpMsg>(1024);
     let mut buf = vec![0u8; 65536];
+
+    // Cache local interface IPs — gathering shells out to `ip` and must not
+    // run per packet. Refreshed periodically in case addresses change.
+    let mut local_ips = gather_local_ips();
+    let mut local_ips_refreshed = Instant::now();
+    const LOCAL_IPS_TTL: Duration = Duration::from_secs(60);
 
     info!("WebRTC UDP loop listening on {}", local_addr);
 
@@ -186,6 +284,15 @@ pub async fn run_udp_loop(
             debug!("rtc: new peer from {}, total={}", new_peer.peer_ip, peers.len());
         }
 
+        // Pump TCP -> data channel bytes, respecting SCTP backpressure.
+        // Chunks the send buffer rejects stay queued; the bounded per-channel
+        // queue blocks the TCP reader, pushing backpressure to the relay.
+        for peer in peers.iter_mut() {
+            for cid in peer.flush_bridges() {
+                peer.close_channel(cid, &connection_tracker);
+            }
+        }
+
         // Poll all peers for output.
         let mut earliest_timeout = Instant::now() + Duration::from_millis(100);
 
@@ -202,7 +309,6 @@ pub async fn run_udp_loop(
                             &relay_allowlist,
                             &connection_tracker,
                             &ws_limits,
-                            &tcp_tx,
                             has_ipv6,
                         );
                     }
@@ -215,47 +321,6 @@ pub async fn run_udp_loop(
                     Err(e) => {
                         debug!("rtc: poll error for {}: {}", peer.peer_ip, e);
                         break;
-                    }
-                }
-            }
-        }
-
-        // Drain TCP -> data channel messages.
-        while let Ok(msg) = tcp_rx.try_recv() {
-            match msg {
-                TcpMsg::Data(cid, data) => {
-                    for peer in peers.iter_mut() {
-                        if peer.channels.get(&cid).is_some() {
-                            if let Some(mut ch) = peer.rtc.channel(cid) {
-                                let _ = ch.write(true, &data);
-                            }
-                            peer.last_activity = Instant::now();
-                            break;
-                        }
-                    }
-                }
-                TcpMsg::Closed(cid) => {
-                    for peer in peers.iter_mut() {
-                        if let Some((label, _)) = peer.channels.remove(&cid) {
-                            let sctp_id = peer.rtc.direct_api()
-                                .sctp_stream_id_by_channel_id(cid)
-                                .unwrap_or(0);
-                            peer.rtc.direct_api().close_data_channel(cid);
-                            // Notify client via signal channel so it can close locally.
-                            if let Some(sig_cid) = peer.signal_cid {
-                                if let Some(mut ch) = peer.rtc.channel(sig_cid) {
-                                    let msg = serde_json::json!({
-                                        "type": "closed",
-                                        "channel": label,
-                                        "sctp_id": sctp_id,
-                                    });
-                                    let _ = ch.write(false, msg.to_string().as_bytes());
-                                }
-                            }
-                            connection_tracker.release(peer.peer_ip);
-                            debug!("rtc: TCP closed for channel {:?} ({}), peer {}", cid, label, peer.peer_ip);
-                            break;
-                        }
                     }
                 }
             }
@@ -313,7 +378,11 @@ pub async fn run_udp_loop(
                         // packet was addressed to. Try each candidate IP we registered
                         // until a peer accepts.
                         let candidate_ips: Vec<IpAddr> = if local_addr.ip().is_unspecified() {
-                            gather_local_ips()
+                            if local_ips_refreshed.elapsed() > LOCAL_IPS_TTL {
+                                local_ips = gather_local_ips();
+                                local_ips_refreshed = Instant::now();
+                            }
+                            local_ips.clone()
                         } else {
                             vec![local_addr.ip()]
                         };
@@ -367,7 +436,6 @@ fn handle_peer_event(
     relay_allowlist: &RelayAllowlist,
     connection_tracker: &ConnectionTracker,
     ws_limits: &WsLimits,
-    tcp_tx: &mpsc::Sender<TcpMsg>,
     has_ipv6: bool,
 ) {
     /// Send a JSON message on the signal channel.
@@ -450,11 +518,19 @@ fn handle_peer_event(
             }
 
             // Spawn TCP bridge task.
-            let (dc_to_tcp_tx, dc_to_tcp_rx) = mpsc::channel::<Vec<u8>>(64);
-            let tcp_tx = tcp_tx.clone();
-            tokio::spawn(tcp_bridge_task(addr, cid, dc_to_tcp_rx, tcp_tx));
+            let (to_tcp_tx, to_tcp_rx) = mpsc::channel::<Vec<u8>>(DC_TO_TCP_QUEUE);
+            let (from_tcp_tx, from_tcp_rx) = mpsc::channel::<Vec<u8>>(TCP_TO_DC_QUEUE);
+            tokio::spawn(tcp_bridge_task(addr, to_tcp_rx, from_tcp_tx));
 
-            peer.channels.insert(cid, (label.to_string(), dc_to_tcp_tx));
+            peer.channels.insert(
+                cid,
+                ChannelBridge {
+                    label: label.to_string(),
+                    to_tcp: to_tcp_tx,
+                    from_tcp: from_tcp_rx,
+                    pending: None,
+                },
+            );
             peer.last_activity = Instant::now();
         }
         Event::ChannelData(data) => {
@@ -478,14 +554,28 @@ fn handle_peer_event(
                 return;
             }
 
-            if let Some((_, tx)) = peer.channels.get(&data.id) {
-                let _ = tx.try_send(data.data.to_vec());
+            if let Some(bridge) = peer.channels.get(&data.id) {
+                match bridge.to_tcp.try_send(data.data.to_vec()) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        // Dropping bytes would corrupt the TCP stream; fail loudly.
+                        warn!(
+                            "rtc: DC->TCP queue overflow on channel {:?}, closing",
+                            data.id
+                        );
+                        peer.close_channel(data.id, connection_tracker);
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        // TCP task exited; flush_bridges will close the channel
+                        // once any remaining TCP->DC data has been written.
+                    }
+                }
             }
         }
         Event::ChannelClose(cid) => {
             if peer.signal_cid == Some(cid) {
                 peer.signal_cid = None;
-            } else if peer.channels.remove(&cid).is_some() { // (label, tx) dropped
+            } else if peer.channels.remove(&cid).is_some() { // bridge dropped, TCP task exits
                 connection_tracker.release(peer.peer_ip);
                 debug!("rtc: channel {:?} closed by remote", cid);
             }
@@ -501,11 +591,13 @@ fn handle_peer_event(
 }
 
 /// Bridge between a data channel and a TCP connection to a Tor relay.
+///
+/// Dropping `to_dc` is how the event loop learns the TCP side is done (it
+/// closes the data channel once all queued data has been flushed).
 async fn tcp_bridge_task(
     target: SocketAddr,
-    cid: ChannelId,
-    mut dc_to_tcp_rx: mpsc::Receiver<Vec<u8>>,
-    tcp_tx: mpsc::Sender<TcpMsg>,
+    mut from_dc: mpsc::Receiver<Vec<u8>>,
+    to_dc: mpsc::Sender<Vec<u8>>,
 ) {
     let tcp = match tokio::time::timeout(
         Duration::from_secs(10),
@@ -516,22 +608,20 @@ async fn tcp_bridge_task(
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
             debug!("rtc: TCP connect to {} failed: {}", target, e);
-            let _ = tcp_tx.send(TcpMsg::Closed(cid)).await;
             return;
         }
         Err(_) => {
             debug!("rtc: TCP connect to {} timed out", target);
-            let _ = tcp_tx.send(TcpMsg::Closed(cid)).await;
             return;
         }
     };
-    info!("rtc: TCP connected to {} for channel {:?}", target, cid);
+    info!("rtc: TCP connected to {}", target);
 
     let (mut tcp_read, mut tcp_write) = tcp.into_split();
 
     // DC -> TCP
     let dc_to_tcp = async {
-        while let Some(data) = dc_to_tcp_rx.recv().await {
+        while let Some(data) = from_dc.recv().await {
             if tcp_write.write_all(&data).await.is_err() {
                 break;
             }
@@ -539,18 +629,16 @@ async fn tcp_bridge_task(
         let _ = tcp_write.shutdown().await;
     };
 
-    // TCP -> DC
+    // TCP -> DC. The bounded channel applies backpressure: when the event
+    // loop can't write to the data channel (SCTP send buffer full), this
+    // send blocks, we stop reading, and the kernel closes the TCP window.
     let tcp_to_dc = async {
         let mut buf = vec![0u8; 16384];
         loop {
             match tcp_read.read(&mut buf).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if tcp_tx
-                        .send(TcpMsg::Data(cid, buf[..n].to_vec()))
-                        .await
-                        .is_err()
-                    {
+                    if to_dc.send(buf[..n].to_vec()).await.is_err() {
                         break;
                     }
                 }
@@ -563,8 +651,7 @@ async fn tcp_bridge_task(
         _ = tcp_to_dc => {}
     }
 
-    let _ = tcp_tx.send(TcpMsg::Closed(cid)).await;
-    debug!("rtc: TCP bridge for {:?} to {} done", cid, target);
+    debug!("rtc: TCP bridge to {} done", target);
 }
 
 /// Gather all non-unspecified IP addresses from local network interfaces.
