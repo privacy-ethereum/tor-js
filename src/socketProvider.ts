@@ -180,6 +180,7 @@ export class ArtiSocketProvider {
   // WebRTC state (lazily created, reused across connect() calls)
   #rtcPc: RTCPeerConnection | null = null;
   #rtcAlive = false;
+  #rtcSetup: Promise<void> | null = null;
   #signalChannel: RTCDataChannel | null = null;
   // Tracked data channels: before open has reject, after open has sock.
   #tracked: TrackedEntry[] = [];
@@ -274,10 +275,17 @@ export class ArtiSocketProvider {
       throw new Error('RTCPeerConnection not available');
     }
 
-    // Create or reuse peer connection
+    // Create or reuse peer connection. Concurrent connect() calls share one
+    // setup; otherwise each opens its own RTCPeerConnection and _signal
+    // messages can match the wrong channel (SCTP ids collide across PCs).
     if (!this.#rtcAlive) {
-      if (this.#rtcPc) this.#rtcPc.close();
-      await this.#setupRtcPeerConnection();
+      if (!this.#rtcSetup) {
+        if (this.#rtcPc) this.#rtcPc.close();
+        this.#rtcSetup = this.#setupRtcPeerConnection().finally(() => {
+          this.#rtcSetup = null;
+        });
+      }
+      await this.#rtcSetup;
     }
 
     const dc = this.#rtcPc!.createDataChannel(target);
