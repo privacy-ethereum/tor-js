@@ -36,7 +36,7 @@ jobs:
         run: npm ci
 
       - name: Build WASM + TS wrapper
-        run: npm run build:release
+        run: npm run build
 
       - name: Assemble showcase site
         run: |
