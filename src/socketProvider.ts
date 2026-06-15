@@ -275,9 +275,12 @@ export class ArtiSocketProvider {
       throw new Error('RTCPeerConnection not available');
     }
 
-    // Create or reuse peer connection. Concurrent connect() calls share one
-    // setup; otherwise each opens its own RTCPeerConnection and _signal
-    // messages can match the wrong channel (SCTP ids collide across PCs).
+    // Create or reuse peer connection. Concurrent connect() calls must share
+    // one PC. A channel's SCTP id is unique only within its own PC, but
+    // #findTracked resolves incoming _signal messages by id against a single
+    // global #tracked list. A second PC would reuse the same ids, so a signal
+    // for a channel on one PC could resolve to a channel on the other. Keeping
+    // to one PC makes that id lookup unambiguous.
     if (!this.#rtcAlive) {
       if (!this.#rtcSetup) {
         if (this.#rtcPc) this.#rtcPc.close();
@@ -288,7 +291,11 @@ export class ArtiSocketProvider {
       await this.#rtcSetup;
     }
 
-    const dc = this.#rtcPc!.createDataChannel(target);
+    if (!this.#rtcPc) {
+      // #rtcPc must exist because #rtcAlive or #rtcSetup completed successfully
+      throw new Error('internal error: rtc peer connection not established');
+    }
+    const dc = this.#rtcPc.createDataChannel(target);
     dc.binaryType = 'arraybuffer';
 
     const entry = { dc, sock: null as ArtiSocket | null, reject: null as ((err: Error) => void) | null };
