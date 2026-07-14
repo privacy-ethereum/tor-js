@@ -1,2 +1,6 @@
 /target
 /tmp
+node_modules/
+/tests/browser/test-results/
+/tests/browser/playwright-report/
+/tests/browser/.run-state.json

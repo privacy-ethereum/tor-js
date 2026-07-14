@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>tor-js-gateway browser smoke test</title>
+  <!-- Resolve the bare package specifiers to the dist trees the static server
+       exposes (see global-setup.js STATIC_ROUTES). Avoids a bundler. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "@kpstreams/core": "/kps/core/index.js",
+      "@kpstreams/core/webrtc": "/kps/core/webrtc.js",
+      "@kpstreams/webrtc-client": "/kps/webrtc-client/index.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <pre id="status">idle</pre>
+  <pre id="result"></pre>
+  <script type="module">
+    import { dial } from '@kpstreams/webrtc-client'
+
+    const statusEl = document.getElementById('status')
+    const resultEl = document.getElementById('result')
+    const setStatus = s => { statusEl.textContent = s }
+
+    // One KPS-HTTP/1 exchange (PROTOCOL.md §3): write the request, FIN, read
+    // the response to EOF. Returns the parsed /metadata.json document.
+    window.fetchMetadata = async function (addr) {
+      setStatus('dialing')
+      const conn = await dial(addr)
+      setStatus('connected')
+      const stream = await conn.openStream()
+
+      const writer = stream.writable.getWriter()
+      await writer.write(new TextEncoder().encode(
+        'GET /metadata.json HTTP/1.1\r\nHost: x\r\n\r\n'))
+      await writer.close()
+
+      const reader = stream.readable.getReader()
+      const chunks = []
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        if (value) chunks.push(value)
+      }
+      const total = chunks.reduce((n, c) => n + c.length, 0)
+      const merged = new Uint8Array(total)
+      let off = 0
+      for (const c of chunks) { merged.set(c, off); off += c.length }
+      const text = new TextDecoder().decode(merged)
+
+      const [head, body] = text.split('\r\n\r\n')
+      const status = parseInt(head.split(' ')[1], 10)
+      const meta = JSON.parse(body)
+      resultEl.textContent = JSON.stringify(meta)
+      setStatus('done')
+      await conn.close()
+      return { status, meta }
+    }
+  </script>
+</body>
+</html>

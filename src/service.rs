@@ -23,7 +23,7 @@ fn unit_path() -> PathBuf {
 fn generate_unit(binary: &Path, config: &Path) -> String {
     format!(
         r#"[Unit]
-Description=tor-js-gateway — Tor gateway for browser clients
+Description=tor-js-gateway — KPS gateway for tor-js browser clients
 After=network-online.target
 Wants=network-online.target
 

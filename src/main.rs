@@ -1,13 +1,14 @@
 mod config;
 mod dir;
-mod server;
+mod kps_server;
+mod routes;
 mod service;
 mod store;
 mod sync;
-mod webrtc_proxy;
-mod ws_proxy;
+mod tunnel;
 
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
@@ -19,7 +20,7 @@ use arti_client::{TorClient, TorClientConfig};
 
 #[derive(Parser)]
 #[command(name = "tor-js-gateway")]
-#[command(about = "Gateway server for tor-js — bootstrap, WebSocket relay, peer discovery")]
+#[command(about = "KPS gateway for tor-js — bootstrap, TCP relay via CONNECT, worker bundles")]
 struct Cli {
     /// Path to config file
     #[arg(short, long, default_value_os_t = config::config_path())]
@@ -36,8 +37,13 @@ enum Command {
         /// Exit after the first successful sync instead of looping
         #[arg(long)]
         once: bool,
+
+        /// Serve only from cached data: skip the Tor client and consensus sync
+        /// (implies ignoring --once)
+        #[arg(long)]
+        no_sync: bool,
     },
-    /// Create a default config file
+    /// Create a default config file and the KPS identity key
     Init,
     /// Print the current config from disk
     ShowConfig,
@@ -53,8 +59,8 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Command::Run { once: false }) {
-        Command::Init => config::Config::init(&cli.config),
+    match cli.command.unwrap_or(Command::Run { once: false, no_sync: false }) {
+        Command::Init => init(&cli.config),
         Command::ShowConfig => {
             let cfg = config::Config::load(&cli.config)?;
             println!("{}", json5::to_string(&cfg)?);
@@ -64,10 +70,28 @@ async fn main() -> Result<()> {
             println!("{}", config::Config::to_json5_with_comments());
             Ok(())
         }
-        Command::Run { once } => run(&cli.config, once).await,
+        Command::Run { once, no_sync } => run(&cli.config, once, no_sync).await,
         Command::Install => service::install(&cli.config),
         Command::Uninstall => service::uninstall(),
     }
+}
+
+/// `init`: write the default config and generate the KPS identity key, so the
+/// certhash (the stable part of the gateway's published address) exists before
+/// the first run.
+fn init(config_path: &PathBuf) -> Result<()> {
+    config::Config::init(config_path)?;
+    let cfg = config::Config::load(config_path)?;
+    if let Some(parent) = cfg.kps_key_file.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    let identity = kps::Identity::load_or_create(&cfg.kps_key_file)
+        .with_context(|| format!("generating KPS key at {}", cfg.kps_key_file.display()))?;
+    println!("Created KPS key at {}", cfg.kps_key_file.display());
+    println!("Certhash: {}", identity.certhash);
+    println!("The full dialable address(es) are printed at startup.");
+    Ok(())
 }
 
 /// Check if the system has IPv6 internet connectivity by looking for a default route.
@@ -82,7 +106,96 @@ fn detect_ipv6() -> bool {
     text.contains("default")
 }
 
-async fn run(config_path: &PathBuf, once: bool) -> Result<()> {
+/// Best-effort detection of the local IP used for outbound traffic in one
+/// address family (a UDP `connect()` picks the route; no packets are sent).
+/// Behind NAT this yields a private address — operators must then set
+/// `advertised_addresses`.
+fn detect_source_ip(v6: bool) -> Option<IpAddr> {
+    let (bind, probe) = if v6 {
+        ("[::]:0", "[2001:4860:4860::8888]:53")
+    } else {
+        ("0.0.0.0:0", "8.8.8.8:53")
+    };
+    let sock = std::net::UdpSocket::bind(bind).ok()?;
+    sock.connect(probe).ok()?;
+    let ip = sock.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
+}
+
+/// The addresses to publish: explicit config wins; otherwise derive from the
+/// detected outbound IPs (v4 and, when connected, v6) with the listener's
+/// port and certhash.
+fn advertised_addresses(
+    cfg: &config::Config,
+    listener: &kps::Listener,
+    has_ipv6: bool,
+) -> Vec<String> {
+    if !cfg.advertised_addresses.is_empty() {
+        return cfg
+            .advertised_addresses
+            .iter()
+            .map(|ip| listener.address(ip))
+            .collect();
+    }
+    let mut out = Vec::new();
+    if let Some(ip) = detect_source_ip(false) {
+        out.push(listener.address(&ip.to_string()));
+    }
+    if has_ipv6 {
+        if let Some(ip) = detect_source_ip(true) {
+            out.push(listener.address(&ip.to_string()));
+        }
+    }
+    if out.is_empty() {
+        tracing::warn!("could not detect a public IP; set advertised_addresses in the config");
+        out.push(listener.address(""));
+    }
+    out
+}
+
+/// Pre-populate the relay allowlist from a cached consensus so CONNECT works
+/// immediately, before the first sync completes.
+fn preload_allowlist(data_dir: &std::path::Path, allowlist: &tunnel::RelayAllowlist) {
+    let consensus_path = data_dir.join("consensus-microdesc.txt");
+    let Ok(text) = std::fs::read_to_string(&consensus_path) else {
+        return;
+    };
+    let mut addrs = HashSet::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("r ") {
+            // r <nickname> <identity> <date> <time> <ip> <orport> <dirport>
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.len() >= 6 {
+                if let (Ok(ip), Ok(port)) =
+                    (parts[4].parse::<std::net::IpAddr>(), parts[5].parse::<u16>())
+                {
+                    if port != 0 {
+                        addrs.insert(std::net::SocketAddr::new(ip, port));
+                    }
+                }
+                // DirPort
+                if parts.len() >= 7 {
+                    if let Ok(dport) = parts[6].parse::<u16>() {
+                        if dport != 0 {
+                            if let Ok(ip) = parts[4].parse::<std::net::IpAddr>() {
+                                addrs.insert(std::net::SocketAddr::new(ip, dport));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !addrs.is_empty() {
+        tracing::info!(
+            "pre-populated relay allowlist with {} addresses from cached consensus",
+            addrs.len()
+        );
+        *allowlist.write().unwrap() = addrs;
+    }
+}
+
+async fn run(config_path: &PathBuf, once: bool, no_sync: bool) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -94,54 +207,15 @@ async fn run(config_path: &PathBuf, once: bool) -> Result<()> {
     std::fs::create_dir_all(&cfg.data_dir)
         .with_context(|| format!("creating data dir {:?}", cfg.data_dir))?;
 
-    let relay_allowlist: ws_proxy::RelayAllowlist = Arc::new(RwLock::new(HashSet::new()));
+    let relay_allowlist: tunnel::RelayAllowlist = Arc::new(RwLock::new(HashSet::new()));
+    preload_allowlist(&cfg.data_dir, &relay_allowlist);
 
-    // Pre-populate relay allowlist from cached consensus so connections
-    // are accepted immediately, before the first sync completes.
-    {
-        let consensus_path = cfg.data_dir.join("consensus-microdesc.txt");
-        if let Ok(text) = std::fs::read_to_string(&consensus_path) {
-            let mut addrs = HashSet::new();
-            for line in text.lines() {
-                if let Some(rest) = line.strip_prefix("r ") {
-                    // r <nickname> <identity> <date> <time> <ip> <orport> <dirport>
-                    let parts: Vec<&str> = rest.split_whitespace().collect();
-                    if parts.len() >= 6 {
-                        if let (Ok(ip), Ok(port)) =
-                            (parts[4].parse::<std::net::IpAddr>(), parts[5].parse::<u16>())
-                        {
-                            if port != 0 {
-                                addrs.insert(std::net::SocketAddr::new(ip, port));
-                            }
-                        }
-                        // DirPort
-                        if parts.len() >= 7 {
-                            if let Ok(dport) = parts[6].parse::<u16>() {
-                                if dport != 0 {
-                                    if let Ok(ip) = parts[4].parse::<std::net::IpAddr>() {
-                                        addrs.insert(std::net::SocketAddr::new(ip, dport));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if !addrs.is_empty() {
-                tracing::info!(
-                    "pre-populated relay allowlist with {} addresses from cached consensus",
-                    addrs.len()
-                );
-                *relay_allowlist.write().unwrap() = addrs;
-            }
-        }
-    }
-    let connection_tracker = ws_proxy::ConnectionTracker::new();
-    let ws_limits = ws_proxy::WsLimits {
-        max_connections: cfg.ws_max_connections,
-        per_ip_limit: cfg.ws_per_ip_limit,
-        idle_timeout: Duration::from_secs(cfg.ws_idle_timeout),
-        max_lifetime: Duration::from_secs(cfg.ws_max_lifetime),
+    let limits = tunnel::TunnelLimits {
+        max_tunnels: cfg.tunnel_max,
+        per_ip: cfg.tunnel_per_ip,
+        per_conn: cfg.tunnel_per_ip,
+        idle_timeout: Duration::from_secs(cfg.tunnel_idle_timeout),
+        max_lifetime: Duration::from_secs(cfg.tunnel_max_lifetime),
     };
 
     // Detect IPv6 connectivity by checking for a default route.
@@ -152,42 +226,48 @@ async fn run(config_path: &PathBuf, once: bool) -> Result<()> {
         tracing::info!("no IPv6 connectivity — IPv6 relay targets will be rejected");
     }
 
-    // Start WebRTC UDP loop if enabled.
-    let (webrtc_tx, webrtc_local_addr) = if cfg.webrtc_port != 0 {
-        let udp = tokio::net::UdpSocket::bind(("0.0.0.0", cfg.webrtc_port))
-            .await
-            .with_context(|| format!("binding WebRTC UDP port {}", cfg.webrtc_port))?;
-        let local_addr = udp.local_addr()?;
-        let (tx, rx) = tokio::sync::mpsc::channel::<webrtc_proxy::NewPeer>(256);
-        let allowlist = relay_allowlist.clone();
-        let tracker = connection_tracker.clone();
-        let limits = ws_limits.clone();
-        let ipv6 = has_ipv6;
-        tokio::spawn(async move {
-            webrtc_proxy::run_udp_loop(udp, local_addr, rx, allowlist, tracker, limits, ipv6).await;
-        });
-        (Some(tx), Some(local_addr))
+    // Load and verify worker bundles (empty dir config disables the capability).
+    let bundles = if cfg.worker_bundles_dir.as_os_str().is_empty() {
+        std::collections::HashMap::new()
     } else {
-        (None, None)
+        routes::load_worker_bundles(&cfg.worker_bundles_dir)?
     };
+    let worker_bundles_enabled = !cfg.worker_bundles_dir.as_os_str().is_empty();
 
-    // Start HTTP server (unless disabled with port: 0)
-    if cfg.port != 0 {
-        let data_dir = cfg.data_dir.clone();
-        let port = cfg.port;
-        let allow_uncompressed = cfg.allow_uncompressed;
-        let allowlist = relay_allowlist.clone();
-        let tracker = connection_tracker.clone();
-        let limits = ws_limits.clone();
-        let rtc_tx = webrtc_tx.clone();
-        let rtc_addr = webrtc_local_addr;
-        tokio::spawn(async move {
-            if let Err(e) =
-                server::run(data_dir, port, allow_uncompressed, allowlist, tracker, limits, rtc_tx, rtc_addr, has_ipv6).await
-            {
-                tracing::error!("HTTP server failed: {:#}", e);
-            }
-        });
+    // Start the KPS listener: one UDP port serving both QUIC and WebRTC.
+    let listener = kps::listen(
+        &format!(":{}", cfg.kps_port),
+        kps::ListenOptions {
+            identity: None,
+            key_file: Some(cfg.kps_key_file.clone()),
+        },
+    )
+    .await
+    .with_context(|| format!("starting KPS listener on UDP port {}", cfg.kps_port))?;
+
+    let addresses = advertised_addresses(&cfg, &listener, has_ipv6);
+    tracing::info!("KPS listener on UDP port {}", listener.port());
+    tracing::info!("┌─ publish this address — clients dial it directly (there is no DNS):");
+    for addr in &addresses {
+        tracing::info!("│    {}", addr);
+    }
+    tracing::info!("└─ an IP change changes the address; advertise both v4 and v6 where possible");
+
+    let gateway = Arc::new(routes::Gateway {
+        data_dir: cfg.data_dir.clone(),
+        relay_allowlist: relay_allowlist.clone(),
+        tracker: tunnel::ConnectionTracker::new(),
+        limits,
+        has_ipv6,
+        bundles,
+        metadata_json: routes::build_metadata(&addresses, worker_bundles_enabled),
+    });
+    let router = routes::build_router(gateway.clone());
+    tokio::spawn(kps_server::run(listener, gateway, router));
+
+    if no_sync {
+        tracing::info!("--no-sync: serving cached data only, consensus sync disabled");
+        return futures::future::pending::<Result<()>>().await;
     }
 
     // Load stores from previous run

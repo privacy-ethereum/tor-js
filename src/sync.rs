@@ -16,7 +16,7 @@ use tor_circmgr::DirInfo;
 use tor_netdir::Timeliness;
 
 use crate::store::{AuthCertStore, Stores};
-use crate::ws_proxy::RelayAllowlist;
+use crate::tunnel::RelayAllowlist;
 
 /// Fetch consensus, parse it, fetch missing microdescs, write everything to disk.
 /// Returns the consensus lifetime for scheduling the next sync.
