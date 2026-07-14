@@ -1,19 +1,46 @@
 # website
 
 The tor-js-gateway demo/inspector site: landing page, bootstrap inspector,
-relay connection tester, and the `torJsGateway.js` client library.
+and relay connection tester, all speaking **KPS** — the browser dials a
+gateway's `<ip>:<port>:<certhash>` address over WebRTC with
+[`@kpstreams/webrtc-client`](https://www.npmjs.com/package/@kpstreams/webrtc-client)
+and runs KPS-HTTP/1 exchanges (see [../PROTOCOL.md](../PROTOCOL.md)) on its
+streams. There are no gateway URLs anywhere: the user pastes a gateway KPS
+address (persisted in localStorage across the pages).
 
-This is a self-contained subproject with its own hosting story — the gateway
-binary no longer serves any pages (it is KPS-only; see [../PROTOCOL.md](../PROTOCOL.md)).
+This is a self-contained static site with its own build and hosting story —
+the gateway binary serves no pages.
 
-**Status: not yet ported to KPS.** These pages still speak the old HTTP/WS/WebRTC
-endpoints (`fetch` against gateway URLs, `/socket/{target}`, `/rtc/connect`),
-which no longer exist. The porting workstream (handover Task 6):
+## Build
 
-- Replace `torJsGateway.js`'s transport code with [`@kpstreams/webrtc-client`](https://www.npmjs.com/package/@kpstreams/webrtc-client)
-  dials plus the KPS-HTTP/1 exchange (`GET /bootstrap.zip.br`, `CONNECT`).
-- The user pastes/configures a gateway KPS address (`<ip>:<port>:<certhash>`)
-  instead of a URL.
-- `smartBootstrapDownload`'s WASM-brotli path becomes the only path — there is
-  no transparent decompression on raw streams; remove the transparent branch.
-- Progress events keep working off `X-Decompressed-Content-Length`/`Content-Length`.
+```
+npm install
+npm run build     # bundles torJsGateway.js (+ @kpstreams deps) into dist/
+```
+
+Then host the directory on any static file server. For local preview:
+
+```
+npm run serve     # build + python3 -m http.server 8080
+```
+
+## Pages
+
+| Page | What it does |
+|---|---|
+| `index.html` | Landing page; set the gateway address, see its `/metadata.json` (dialed live over KPS) |
+| `bootstrap.html` | Downloads `/bootstrap.zip.br` over a KPS stream with progress, decompresses via WASM brotli (the only path — there is no transparent decompression on raw streams), and renders the consensus |
+| `connect.html` | Opens `CONNECT` tunnels to consensus relays on KPS streams; hex console per tunnel |
+
+## Library
+
+`torJsGateway.js` is the client library the pages share (bundled to
+`dist/torJsGateway.js`):
+
+- `new Gateway(address)` — lazy-dials the gateway over WebRTC and reuses the
+  connection; `fetch`/`fetchStream` run one KPS-HTTP/1 exchange per stream.
+- `gateway.connect(target)` → `RelaySocket` — a `CONNECT` tunnel
+  (`send`/`onmessage`/`onclose`/`closeWrite`/`close`).
+- `bootstrap(gatewayOrAddress, onEvent)` — download + WASM-brotli decompress +
+  parse, with progress events driven by `Content-Length` (compressed) and
+  `X-Decompressed-Content-Length` (decompressed).

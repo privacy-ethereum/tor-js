@@ -241,10 +241,7 @@ main {
   font-weight: 600;
 }
 
-.conn-badge.websocket { background: #1a2a3a; color: #64b5f6; }
-.conn-badge.webrtc { background: #2a1a3a; color: #ce93d8; }
-.conn-badge.direct { background: #1a3a2a; color: #81c784; }
-.conn-badge.auto { background: #2a2a3a; color: var(--text-dim); }
+.conn-badge.kps { background: #2a1a3a; color: #ce93d8; }
 
 .status-indicator {
   display: flex;
@@ -425,13 +422,13 @@ main {
 <header>
   <div class="header-inner">
     <div>
-      <a href="/" style="color:inherit;text-decoration:none;"><h1>tor-js-gateway</h1></a>
-      <p class="subtitle">Relay connection tester &mdash; WebSocket &amp; WebRTC</p>
+      <a href="./" style="color:inherit;text-decoration:none;"><h1>tor-js-gateway</h1></a>
+      <p class="subtitle">Relay connection tester &mdash; CONNECT over KPS</p>
     </div>
     <div class="nav-links">
-      <a href="/connect">Connect</a>
-      <a href="/bootstrap">Bootstrap</a>
-      <a href="https://github.com/privacy-ethereum/tor-fast-bootstrap" class="github-link" title="View on GitHub">
+      <a href="./connect.html">Connect</a>
+      <a href="./bootstrap.html">Bootstrap</a>
+      <a href="https://github.com/privacy-ethereum/tor-js-gateway" class="github-link" title="View on GitHub">
         <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor">
           <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
         </svg>
@@ -444,41 +441,32 @@ main {
   <div class="connect-form">
     <h2>Connect to a Tor relay</h2>
     <div class="form-row">
+      <div class="form-group" style="flex:1;">
+        <label for="gw-address">Gateway (ip:port:certhash)</label>
+        <input id="gw-address" type="text" placeholder="Gateway KPS address" autocomplete="off" spellcheck="false" style="width:100%;">
+      </div>
+    </div>
+    <div class="form-row">
       <div class="form-group">
         <label for="target-input">Target (ip:port)</label>
         <input id="target-input" type="text" placeholder="128.31.0.39:9201" autocomplete="off" spellcheck="false">
       </div>
-      <div class="form-group">
-        <label for="transport-select">Transport</label>
-        <select id="transport-select">
-          <option value="auto">Auto</option>
-          <option value="webrtc">WebRTC</option>
-          <option value="websocket">WebSocket</option>
-        </select>
-      </div>
       <button id="connect-btn" class="btn btn-connect">Connect</button>
     </div>
     <div class="hint">
-      Only consensus-listed relay addresses are allowed.
+      Only consensus-listed relay addresses are allowed. The tunnel is one
+      <code>CONNECT</code> exchange on a KPS stream.
       <a href="#" id="random-relay-link">Random relay</a> &middot;
       <a href="#" id="pick-relay-link">Browse relays</a>
     </div>
     <div id="relay-list"></div>
   </div>
 
-  <details class="signal-panel" id="signal-panel" hidden>
-    <summary>
-      <span class="signal-label">Signal Channel</span>
-      <button class="btn btn-clear" id="ping-btn" onclick="event.preventDefault()">Ping</button>
-    </summary>
-    <div class="event-log signal-log" id="signal-log"></div>
-  </details>
-
   <div id="connections"></div>
 </main>
 
 <script type="module">
-import { Gateway } from './torJsGateway.js';
+import { Gateway, smartBootstrapDownload, parseBootstrapZip } from './dist/torJsGateway.js';
 
 // Build a minimal valid TLS 1.3 ClientHello that elicits a ServerHello
 // without closing the connection.
@@ -516,32 +504,34 @@ function buildTlsClientHello() {
 
 const connectionsEl = document.getElementById('connections');
 const targetInput = document.getElementById('target-input');
-const transportSelect = document.getElementById('transport-select');
+const addressInput = document.getElementById('gw-address');
 const connectBtn = document.getElementById('connect-btn');
 const pickRelayLink = document.getElementById('pick-relay-link');
 const relayListEl = document.getElementById('relay-list');
 
 let connId = 0;
 
-// Shared gateway instances (one per strategy config to reuse WebRTC peer connections)
-const gateways = new Map();
-let relays = null; // cached relay list from metadata
+// One shared Gateway per KPS address; tunnels reuse its KPS connection.
+const ADDRESS_KEY = 'tor-js-gateway-address';
+addressInput.value = localStorage.getItem(ADDRESS_KEY) || '';
+let sharedGw = null;
+
+function getGateway() {
+  const address = addressInput.value.trim();
+  if (!address) {
+    addressInput.focus();
+    throw new Error('enter the gateway KPS address first (ip:port:certhash)');
+  }
+  localStorage.setItem(ADDRESS_KEY, address);
+  if (sharedGw && sharedGw.address === address) return sharedGw;
+  sharedGw?.close();
+  sharedGw = new Gateway(address, {
+    onEvent: (ev) => activeCtrl?.addLog('*', ev.target ? `${ev.type} ${ev.target}` : ev.type),
+  });
+  return sharedGw;
+}
 
 // --- Relay picker ---
-
-async function loadRelays() {
-  if (relays) return relays;
-  try {
-    const res = await fetch('./metadata.json');
-    if (!res.ok) return null;
-    const meta = await res.json();
-    // We don't have full relay list from metadata, but we can try bootstrap
-    // For now just return null — the picker will show a message
-    return null;
-  } catch {
-    return null;
-  }
-}
 
 pickRelayLink.addEventListener('click', async (e) => {
   e.preventDefault();
@@ -555,8 +545,7 @@ pickRelayLink.addEventListener('click', async (e) => {
 
   try {
     // Fetch and parse bootstrap to get relay addresses
-    const { parseBootstrapZip, smartBootstrapDownload } = await import('./torJsGateway.js');
-    const zip = await smartBootstrapDownload('./bootstrap.zip.br');
+    const zip = await smartBootstrapDownload(getGateway());
     const { consensus } = parseBootstrapZip(zip);
 
     const relayItems = [];
@@ -741,106 +730,20 @@ function createConnectionPanel(target, transport) {
 
 // --- Unified connect ---
 
-// --- Shared signal channel UI ---
-
-const signalPanel = document.getElementById('signal-panel');
-const signalLogEl = document.getElementById('signal-log');
-const pingBtnEl = document.getElementById('ping-btn');
-let signalT0 = performance.now();
-
-function signalTs() {
-  return ((performance.now() - signalT0) / 1000).toFixed(3) + 's';
-}
-
-function addSignalLog(dir, body) {
-  signalPanel.hidden = false;
-  const entry = document.createElement('div');
-  entry.className = 'log-entry';
-  const dirClass = dir === '>' ? 'out' : dir === '<' ? 'in' : dir === '!' ? 'err' : 'sys';
-  entry.innerHTML =
-    `<span class="log-ts">${signalTs()}</span>` +
-    `<span class="log-dir ${dirClass}">${esc(dir)}</span>` +
-    `<span class="log-body">${esc(body)}</span>`;
-  signalLogEl.appendChild(entry);
-  signalLogEl.scrollTop = signalLogEl.scrollHeight;
-}
-
-// One gateway per strategy config, with event logging dispatched to active panel.
 let activeCtrl = null;
-let activeGw = null;
 
-pingBtnEl.addEventListener('click', () => {
-  if (activeGw) {
-    activeGw.ping();
-    addSignalLog('>', 'ping');
-  }
-});
-
-function getGateway(strategies) {
-  const key = strategies ? strategies.join(',') : 'auto';
-  let gw = gateways.get(key);
-  if (gw) return gw;
-  const opts = {
-    onEvent: (ev) => {
-      // Signal channel events go to the shared signal log.
-      if (ev.type.startsWith('rtc-')) {
-        switch (ev.type) {
-          case 'rtc-hello':
-            addSignalLog('<', `hello (server=${ev.server}, ipv6=${ev.ipv6})`);
-            return;
-          case 'rtc-pong': {
-            const rtt = ev.ts ? `${Date.now() - ev.ts}ms` : '?';
-            addSignalLog('<', `pong (rtt=${rtt})`);
-            return;
-          }
-          case 'rtc-rejected':
-            addSignalLog('<', `rejected ${ev.channel}: ${ev.reason}`);
-            return;
-          case 'rtc-closed':
-            addSignalLog('<', `closed ${ev.channel}`);
-            return;
-          case 'rtc-error':
-            addSignalLog('!', ev.message);
-            return;
-          case 'rtc-signaling':
-            addSignalLog('*', 'signaling');
-            break; // also log to connection panel
-          case 'rtc-connected':
-            addSignalLog('*', 'peer connected');
-            break;
-          case 'rtc-disconnected':
-            addSignalLog('*', 'peer disconnected');
-            break;
-        }
-      }
-      const msg = ev.strategy
-        ? `${ev.type} [${ev.strategy}]`
-        : ev.type;
-      activeCtrl?.addLog('*', msg);
-    },
-  };
-  if (strategies) opts.strategies = strategies;
-  gw = new Gateway(location.origin, opts);
-  gateways.set(key, gw);
-  return gw;
-}
-
-async function doConnect(target, strategyChoice) {
-  const strategies = strategyChoice === 'auto' ? undefined : [strategyChoice];
-  const label = strategyChoice === 'auto' ? 'auto' : strategyChoice;
-  const ctrl = createConnectionPanel(target, label);
+async function doConnect(target) {
+  const ctrl = createConnectionPanel(target, 'kps');
   activeCtrl = ctrl;
 
   try {
-    const gw = getGateway(strategies);
+    const gw = getGateway();
 
     ctrl.addLog('*', `Connecting to ${target}...`);
     const sock = await gw.connect(target);
 
-    if (sock.strategy) ctrl.setBadge(sock.strategy);
     ctrl.setStatus('open', 'Connected');
-    ctrl.addLog('*', `Connected via ${sock.strategy || 'unknown'}`);
-    activeGw = gw;
+    ctrl.addLog('*', 'Tunnel open');
 
     sock.onmessage = (data) => {
       ctrl.onRecv(data.length);
@@ -900,7 +803,7 @@ async function doConnect(target, strategyChoice) {
 connectBtn.addEventListener('click', () => {
   const target = targetInput.value.trim();
   if (!target) return;
-  doConnect(target, transportSelect.value);
+  doConnect(target);
 });
 
 targetInput.addEventListener('keydown', (e) => {
@@ -911,8 +814,7 @@ targetInput.addEventListener('keydown', (e) => {
 const randomRelayLink = document.getElementById('random-relay-link');
 async function fetchRandomRelay() {
   try {
-    const res = await fetch('./relay/random');
-    if (res.ok) targetInput.value = await res.text();
+    targetInput.value = await getGateway().randomRelay();
   } catch {}
 }
 randomRelayLink.addEventListener('click', (e) => {
@@ -920,12 +822,11 @@ randomRelayLink.addEventListener('click', (e) => {
   fetchRandomRelay();
 });
 
-// Pre-populate from URL hash, or fetch a random relay
+// Pre-populate from URL hash, or fetch a random relay (when an address is saved)
 if (location.hash) {
   const params = new URLSearchParams(location.hash.slice(1));
   if (params.get('target')) targetInput.value = params.get('target');
-  if (params.get('strategy')) transportSelect.value = params.get('strategy');
-} else {
+} else if (addressInput.value) {
   fetchRandomRelay();
 }
 </script>
