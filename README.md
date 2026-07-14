@@ -9,7 +9,7 @@ Built with [Arti](https://gitlab.torproject.org/tpo/core/arti), the Rust Tor imp
 - **KPS transport** — One UDP port serves both QUIC (native clients) and WebRTC (browsers). Clients dial `<ip>:<port>:<certhash>` directly: the certificate hash in the address *is* the server's identity, so there is no CA, no domain, and no DNS. Every exchange speaks [KPS-HTTP/1](PROTOCOL.md) — HTTP/1.1 syntax under a strict profile, one exchange per stream.
 - **Fast Bootstrap** — Serves the consensus, authority certificates, and microdescriptors as a single brotli-compressed archive at `/bootstrap.zip.br`. One fetch, decompressed by the client — no multi-step directory protocol, no round trips to authorities.
 - **TCP relay via CONNECT** — `CONNECT <ip>:<port>` on a KPS stream turns that stream into a raw byte pipe to a Tor relay. The client builds circuits and negotiates keys — the gateway only forwards opaque, encrypted data. Only consensus-advertised relay addresses are allowed.
-- **Worker bundle hosting** — Serves immutable, hash-addressed JavaScript bundles at `/keccak/{hash[0..2]}/{hash[2..]}`, from a disk tree with the same sharded layout. Files are verified against their path-derived hash at startup; the gateway treats them as opaque bytes and never builds them.
+- **Worker bundle hosting** — Serves immutable, hash-addressed JavaScript bundles at `/keccak/{hash[0..2]}/{hash[2..]}`, from a disk tree with the same sharded layout. Each file is verified against its path-derived hash on request (lazily, so objects can be added without a restart) and the result cached; the gateway treats them as opaque bytes and never builds them.
 
 ## Quick start
 

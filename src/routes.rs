@@ -4,10 +4,9 @@
 //! once per KPS stream by `kps_server` without any TCP listener behind it.
 
 use std::collections::HashSet;
-use std::path::{Path as FsPath, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
-use anyhow::{Context, Result};
 use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -26,8 +25,13 @@ pub struct Gateway {
     /// Root of the hash-addressed object tree (`<keccak_dir>/<hh>/<rest>`);
     /// empty when the capability is disabled.
     pub keccak_dir: PathBuf,
-    /// Hashes verified at startup — only these are served.
-    pub verified_bundles: HashSet<String>,
+    /// Whether the worker-bundles capability is enabled (keccak_dir is set).
+    pub keccak_enabled: bool,
+    /// Hashes verified on a prior request. Content is hash-addressed and
+    /// immutable, so a hash that verified once stays valid; caching it lets
+    /// repeat requests skip re-hashing. Populated lazily — nothing needs to
+    /// exist at startup.
+    pub verified_bundles: RwLock<HashSet<String>>,
     /// Precomputed `/metadata.json` document.
     pub metadata_json: String,
 }
@@ -46,59 +50,6 @@ pub fn build_metadata(addresses: &[String], worker_bundles: bool) -> String {
         "addresses": addresses,
     })
     .to_string()
-}
-
-/// Scans the hash-addressed object tree: `<dir>/<hash[0..2]>/<hash[2..]>`,
-/// the same sharded layout the `/keccak/` route exposes. Every file's
-/// keccak256(bytes) must equal its path-derived hash; mismatches are refused
-/// and logged loudly, stray files are ignored with a warning. Returns the set
-/// of verified hashes — only these are served (from disk, at request time).
-pub fn scan_keccak_dir(dir: &FsPath) -> Result<HashSet<String>> {
-    let mut verified = HashSet::new();
-    let shards = std::fs::read_dir(dir)
-        .with_context(|| format!("reading keccak_dir {}", dir.display()))?;
-    for shard in shards {
-        let shard = shard?;
-        let shard_name = shard.file_name().to_string_lossy().into_owned();
-        if !shard.file_type()?.is_dir() || !is_lower_hex(&shard_name, 2) {
-            tracing::warn!(
-                "keccak dir: ignoring {} (expected 2-lowercase-hex shard directories)",
-                shard.path().display()
-            );
-            continue;
-        }
-        for entry in std::fs::read_dir(shard.path())? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !is_lower_hex(&name, 62) {
-                tracing::warn!(
-                    "keccak dir: ignoring {} (expected 62-lowercase-hex filenames)",
-                    entry.path().display()
-                );
-                continue;
-            }
-            let hash = format!("{shard_name}{name}");
-            let bytes = std::fs::read(entry.path())
-                .with_context(|| format!("reading {}", entry.path().display()))?;
-            let actual = keccak256_hex(&bytes);
-            if actual != hash {
-                tracing::error!(
-                    "keccak dir: REFUSING {} — keccak256 of contents is {}, path says {}",
-                    entry.path().display(),
-                    actual,
-                    hash,
-                );
-                continue;
-            }
-            verified.insert(hash);
-        }
-    }
-    tracing::info!(
-        "keccak dir: serving {} verified object(s) from {}",
-        verified.len(),
-        dir.display()
-    );
-    Ok(verified)
 }
 
 fn is_lower_hex(s: &str, len: usize) -> bool {
@@ -131,35 +82,53 @@ async fn handle_metadata(State(gw): State<Arc<Gateway>>) -> Response {
         .into_response()
 }
 
-/// GET /keccak/{hash[0..2]}/{hash[2..]} — immutable, hash-verified worker
-/// bundles, served from disk at the same sharded path. Only hashes verified
-/// at startup are served (the hex validation also makes the path safe).
+/// GET /keccak/{hash[0..2]}/{hash[2..]} — immutable, hash-addressed worker
+/// bundles served from disk at the same sharded path.
+///
+/// Verification is lazy: the file is read and its keccak256 checked against
+/// the path on request, so objects can be added after startup without a
+/// restart. A hash that verifies is cached (content is immutable), and the
+/// hex validation on the path segments also keeps the join traversal-safe.
 async fn handle_worker_bundle(
     State(gw): State<Arc<Gateway>>,
     Path((prefix, rest)): Path<(String, String)>,
 ) -> Response {
-    if !is_lower_hex(&prefix, 2) || !is_lower_hex(&rest, 62) {
+    if !gw.keccak_enabled || !is_lower_hex(&prefix, 2) || !is_lower_hex(&rest, 62) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let hash = format!("{prefix}{rest}");
-    if !gw.verified_bundles.contains(&hash) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    match tokio::fs::read(gw.keccak_dir.join(&prefix).join(&rest)).await {
-        Ok(bytes) => (
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE, "text/javascript"),
-                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-            ],
-            bytes,
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::warn!("keccak dir: {} verified at startup but unreadable: {}", hash, e);
-            StatusCode::SERVICE_UNAVAILABLE.into_response()
+    let path = gw.keccak_dir.join(&prefix).join(&rest);
+
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    // Verify unless a previous request already did (immutable content).
+    let cached = gw.verified_bundles.read().unwrap_or_else(|e| e.into_inner()).contains(&hash);
+    if !cached {
+        let actual = keccak256_hex(&bytes);
+        if actual != hash {
+            tracing::error!(
+                "keccak dir: REFUSING {} — keccak256 of contents is {}, path says {}",
+                path.display(),
+                actual,
+                hash,
+            );
+            return StatusCode::NOT_FOUND.into_response();
         }
+        gw.verified_bundles.write().unwrap_or_else(|e| e.into_inner()).insert(hash);
     }
+
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "text/javascript"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 /// GET /relay/random — return a random relay address from the allowlist.
@@ -185,7 +154,7 @@ async fn handle_random_relay(State(gw): State<Arc<Gateway>>) -> Response {
 }
 
 /// Read the cached ETag from disk, or compute it from bootstrap.zip if missing.
-async fn read_etag(dir: &FsPath) -> Option<String> {
+async fn read_etag(dir: &std::path::Path) -> Option<String> {
     if let Ok(s) = tokio::fs::read_to_string(dir.join("bootstrap.etag")).await {
         return Some(format!("\"{}\"", s.trim()));
     }

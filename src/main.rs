@@ -226,13 +226,9 @@ async fn run(config_path: &PathBuf, once: bool, no_sync: bool) -> Result<()> {
         tracing::info!("no IPv6 connectivity — IPv6 relay targets will be rejected");
     }
 
-    // Verify the hash-addressed object tree (empty config disables the capability).
+    // Empty keccak_dir disables the worker-bundles capability. Objects are
+    // verified lazily on request, so nothing needs to exist here at startup.
     let worker_bundles_enabled = !cfg.keccak_dir.as_os_str().is_empty();
-    let verified_bundles = if worker_bundles_enabled {
-        routes::scan_keccak_dir(&cfg.keccak_dir)?
-    } else {
-        std::collections::HashSet::new()
-    };
 
     // Start the KPS listener: one UDP port serving both QUIC and WebRTC.
     let listener = kps::listen(
@@ -260,7 +256,8 @@ async fn run(config_path: &PathBuf, once: bool, no_sync: bool) -> Result<()> {
         limits,
         has_ipv6,
         keccak_dir: cfg.keccak_dir.clone(),
-        verified_bundles,
+        keccak_enabled: worker_bundles_enabled,
+        verified_bundles: std::sync::RwLock::new(std::collections::HashSet::new()),
         metadata_json: routes::build_metadata(&addresses, worker_bundles_enabled),
     });
     let router = routes::build_router(gateway.clone());

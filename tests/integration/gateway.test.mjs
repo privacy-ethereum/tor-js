@@ -11,6 +11,7 @@ import {
   exchange,
   get,
   connectTunnel,
+  waitForLog,
 } from './helpers.mjs'
 
 const enc = new TextEncoder()
@@ -79,9 +80,21 @@ test('worker bundle — unknown hash and malformed paths are 404', async () => {
   assert.equal((await get(conn, `/worker/${h}.js`)).status, 404) // old route is gone
 })
 
-test('worker bundle — wrong-hash path was refused at startup', async () => {
-  assert.match(gateway.logs.out, /REFUSING .*00\/0{62}/)
-  assert.equal((await get(conn, `/keccak/00/${'0'.repeat(62)}`)).status, 404)
+test('worker bundle — a mismatched file is refused (and logged) on request', async () => {
+  // Verification is lazy: nothing is logged until the bad path is requested.
+  const res = await get(conn, `/keccak/00/${'0'.repeat(62)}`)
+  assert.equal(res.status, 404)
+  // The server's stderr log line can trail the HTTP response slightly.
+  await waitForLog(gateway, /REFUSING .*00\/0{62}/)
+})
+
+test('worker bundle — a file added after startup is served (lazy load)', async () => {
+  const { hash, bytes } = await fixtures.addBundle(
+    `export const late = '${Date.now()}'\n`
+  )
+  const res = await get(conn, `/keccak/${hash.slice(0, 2)}/${hash.slice(2)}`)
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.body, bytes)
 })
 
 test('relay/random — served from the preloaded allowlist', async () => {

@@ -58,10 +58,30 @@ export async function makeFixtures({ allowedTargets = [] } = {}) {
     bootstrapZip,
     bundleBytes,
     bundleHash,
+    // Drop a new hash-addressed object into the tree at runtime; returns its
+    // keccak256 hex (its /keccak/<hh>/<rest> path). Used to prove lazy loading.
+    async addBundle(content) {
+      const bytes = Buffer.from(content)
+      const h = hex(keccak_256(bytes))
+      await mkdir(join(bundlesDir, h.slice(0, 2)), { recursive: true })
+      await writeFile(join(bundlesDir, h.slice(0, 2), h.slice(2)), bytes)
+      return { hash: h, bytes }
+    },
     async cleanup() {
       await rm(dir, { recursive: true, force: true })
     },
   }
+}
+
+/// Wait until the gateway's captured logs match `pattern` (its stderr can
+/// trail the HTTP response it accompanies). Throws if not seen within `ms`.
+export async function waitForLog(gateway, pattern, ms = 3000) {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (pattern.test(gateway.logs.out)) return
+    await new Promise(r => setTimeout(r, 25))
+  }
+  throw new Error(`log did not match ${pattern} within ${ms}ms; logs:\n${gateway.logs.out}`)
 }
 
 function freeUdpPort() {
