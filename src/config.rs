@@ -40,10 +40,11 @@ pub struct Config {
     /// Path to the persistent KPS identity key (PEM; created by `init`)
     pub kps_key_file: PathBuf,
 
-    /// Directory of hash-named worker bundles (`<keccak256-hex>.js`), served
-    /// at `/keccak/{hash[0..2]}/{hash[2..]}`; empty disables the
+    /// Root of the hash-addressed object tree served at
+    /// `/keccak/{hash[0..2]}/{hash[2..]}` — the disk layout mirrors the
+    /// route (`<keccak_dir>/<hh>/<rest>`); empty disables the
     /// worker-bundles capability
-    pub worker_bundles_dir: PathBuf,
+    pub keccak_dir: PathBuf,
 
     /// IP addresses to advertise in metadata.json (the UDP port and certhash
     /// are appended automatically); empty auto-detects
@@ -68,7 +69,7 @@ impl Default for Config {
             data_dir: default_data_dir(),
             kps_port: 42298,
             kps_key_file: default_key_file(),
-            worker_bundles_dir: PathBuf::new(),
+            keccak_dir: PathBuf::new(),
             advertised_addresses: Vec::new(),
             tunnel_max: 8192,
             tunnel_per_ip: 16,
@@ -94,10 +95,11 @@ impl Config {
   // the gateway's published address is derived from it, so keep it stable.
   "kps_key_file": {},
 
-  // Directory of worker bundles named <keccak256-hex>.js, served at
-  // /keccak/{{hash[0..2]}}/{{hash[2..]}}. Empty string disables the
-  // worker-bundles capability.
-  "worker_bundles_dir": "",
+  // Root of the hash-addressed object tree served at
+  // /keccak/{{hash[0..2]}}/{{hash[2..]}}; the disk layout mirrors the route
+  // (<keccak_dir>/<hh>/<rest>, keccak256 of each file's bytes = its path).
+  // Empty string disables the worker-bundles capability.
+  "keccak_dir": "",
 
   // IP addresses to advertise in metadata.json (the UDP port and certhash are
   // appended automatically). Empty: auto-detect from the default route.

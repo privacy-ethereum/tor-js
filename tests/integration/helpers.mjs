@@ -42,11 +42,14 @@ export async function makeFixtures({ allowedTargets = [] } = {}) {
     .join('\n')
   await writeFile(join(dataDir, 'consensus-microdesc.txt'), rLines + '\n')
 
-  // Worker bundles: one correctly named, one whose filename lies.
+  // Hash-addressed objects at <keccak_dir>/<hh>/<rest> (disk layout mirrors
+  // the /keccak/ route): one correctly placed, one whose path lies.
   const bundleBytes = Buffer.from(`export const fixture = '${randomBytes(8).toString('hex')}'\n`)
   const bundleHash = hex(keccak_256(bundleBytes))
-  await writeFile(join(bundlesDir, `${bundleHash}.js`), bundleBytes)
-  await writeFile(join(bundlesDir, `${'0'.repeat(64)}.js`), Buffer.from('// wrong hash\n'))
+  await mkdir(join(bundlesDir, bundleHash.slice(0, 2)))
+  await writeFile(join(bundlesDir, bundleHash.slice(0, 2), bundleHash.slice(2)), bundleBytes)
+  await mkdir(join(bundlesDir, '00'))
+  await writeFile(join(bundlesDir, '00', '0'.repeat(62)), Buffer.from('// wrong hash\n'))
 
   return {
     dir,
@@ -80,7 +83,7 @@ export async function spawnGateway(fixtures, { config = {}, env = {} } = {}) {
     data_dir: fixtures.dataDir,
     kps_port: port,
     kps_key_file: join(fixtures.dir, 'kps.key'),
-    worker_bundles_dir: fixtures.bundlesDir,
+    keccak_dir: fixtures.bundlesDir,
     advertised_addresses: ['127.0.0.1'],
     tunnel_max: 8192,
     tunnel_per_ip: 16,

@@ -61,7 +61,7 @@ async function startGateway(stateDir) {
     data_dir: join(stateDir, 'data'),
     kps_port: 0,
     kps_key_file: join(stateDir, 'kps.key'),
-    worker_bundles_dir: '',
+    keccak_dir: '',
     advertised_addresses: ['127.0.0.1'],
     tunnel_max: 8192,
     tunnel_per_ip: 16,

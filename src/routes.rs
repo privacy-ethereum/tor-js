@@ -3,7 +3,7 @@
 //! axum stays as the routing library: a `Router` is a tower `Service`, called
 //! once per KPS stream by `kps_server` without any TCP listener behind it.
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 
@@ -13,7 +13,6 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
-use bytes::Bytes;
 
 use crate::tunnel::{ConnectionTracker, RelayAllowlist, TunnelLimits};
 
@@ -24,8 +23,11 @@ pub struct Gateway {
     pub tracker: ConnectionTracker,
     pub limits: TunnelLimits,
     pub has_ipv6: bool,
-    /// keccak256-hex → verified bundle bytes, loaded at startup.
-    pub bundles: HashMap<String, Bytes>,
+    /// Root of the hash-addressed object tree (`<keccak_dir>/<hh>/<rest>`);
+    /// empty when the capability is disabled.
+    pub keccak_dir: PathBuf,
+    /// Hashes verified at startup — only these are served.
+    pub verified_bundles: HashSet<String>,
     /// Precomputed `/metadata.json` document.
     pub metadata_json: String,
 }
@@ -46,43 +48,61 @@ pub fn build_metadata(addresses: &[String], worker_bundles: bool) -> String {
     .to_string()
 }
 
-/// Loads worker bundles from `dir`: files named `<64-hex>.js` whose
-/// keccak256(bytes) equals the filename. Mismatches are refused and logged
-/// loudly; other files are ignored with a warning.
-pub fn load_worker_bundles(dir: &FsPath) -> Result<HashMap<String, Bytes>> {
-    let mut bundles = HashMap::new();
-    let entries = std::fs::read_dir(dir)
-        .with_context(|| format!("reading worker_bundles_dir {}", dir.display()))?;
-    for entry in entries {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(hash) = name.strip_suffix(".js").filter(|h| is_keccak_hex(h)) else {
+/// Scans the hash-addressed object tree: `<dir>/<hash[0..2]>/<hash[2..]>`,
+/// the same sharded layout the `/keccak/` route exposes. Every file's
+/// keccak256(bytes) must equal its path-derived hash; mismatches are refused
+/// and logged loudly, stray files are ignored with a warning. Returns the set
+/// of verified hashes — only these are served (from disk, at request time).
+pub fn scan_keccak_dir(dir: &FsPath) -> Result<HashSet<String>> {
+    let mut verified = HashSet::new();
+    let shards = std::fs::read_dir(dir)
+        .with_context(|| format!("reading keccak_dir {}", dir.display()))?;
+    for shard in shards {
+        let shard = shard?;
+        let shard_name = shard.file_name().to_string_lossy().into_owned();
+        if !shard.file_type()?.is_dir() || !is_lower_hex(&shard_name, 2) {
             tracing::warn!(
-                "worker bundles: ignoring {} (not named <64-lowercase-hex>.js)",
-                name
-            );
-            continue;
-        };
-        let bytes = std::fs::read(entry.path())
-            .with_context(|| format!("reading {}", entry.path().display()))?;
-        let actual = keccak256_hex(&bytes);
-        if actual != hash {
-            tracing::error!(
-                "worker bundles: REFUSING {} — keccak256 of contents is {}, filename says {}",
-                entry.path().display(),
-                actual,
-                hash,
+                "keccak dir: ignoring {} (expected 2-lowercase-hex shard directories)",
+                shard.path().display()
             );
             continue;
         }
-        bundles.insert(hash.to_string(), Bytes::from(bytes));
+        for entry in std::fs::read_dir(shard.path())? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !is_lower_hex(&name, 62) {
+                tracing::warn!(
+                    "keccak dir: ignoring {} (expected 62-lowercase-hex filenames)",
+                    entry.path().display()
+                );
+                continue;
+            }
+            let hash = format!("{shard_name}{name}");
+            let bytes = std::fs::read(entry.path())
+                .with_context(|| format!("reading {}", entry.path().display()))?;
+            let actual = keccak256_hex(&bytes);
+            if actual != hash {
+                tracing::error!(
+                    "keccak dir: REFUSING {} — keccak256 of contents is {}, path says {}",
+                    entry.path().display(),
+                    actual,
+                    hash,
+                );
+                continue;
+            }
+            verified.insert(hash);
+        }
     }
-    tracing::info!("worker bundles: serving {} verified bundle(s) from {}", bundles.len(), dir.display());
-    Ok(bundles)
+    tracing::info!(
+        "keccak dir: serving {} verified object(s) from {}",
+        verified.len(),
+        dir.display()
+    );
+    Ok(verified)
 }
 
-fn is_keccak_hex(s: &str) -> bool {
-    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+fn is_lower_hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 fn keccak256_hex(bytes: &[u8]) -> String {
@@ -112,29 +132,33 @@ async fn handle_metadata(State(gw): State<Arc<Gateway>>) -> Response {
 }
 
 /// GET /keccak/{hash[0..2]}/{hash[2..]} — immutable, hash-verified worker
-/// bundles, sharded by the first hex byte.
+/// bundles, served from disk at the same sharded path. Only hashes verified
+/// at startup are served (the hex validation also makes the path safe).
 async fn handle_worker_bundle(
     State(gw): State<Arc<Gateway>>,
     Path((prefix, rest)): Path<(String, String)>,
 ) -> Response {
-    if prefix.len() != 2 || rest.len() != 62 {
+    if !is_lower_hex(&prefix, 2) || !is_lower_hex(&rest, 62) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let hash = format!("{prefix}{rest}");
-    if !is_keccak_hex(&hash) {
+    if !gw.verified_bundles.contains(&hash) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match gw.bundles.get(&hash) {
-        Some(bytes) => (
+    match tokio::fs::read(gw.keccak_dir.join(&prefix).join(&rest)).await {
+        Ok(bytes) => (
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, "text/javascript"),
                 (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
             ],
-            bytes.clone(),
+            bytes,
         )
             .into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            tracing::warn!("keccak dir: {} verified at startup but unreadable: {}", hash, e);
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
     }
 }
 
@@ -229,13 +253,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keccak_hex_validation() {
-        assert!(is_keccak_hex(&"a".repeat(64)));
-        assert!(is_keccak_hex(&"0123456789abcdef".repeat(4)));
-        assert!(!is_keccak_hex(&"A".repeat(64))); // uppercase rejected
-        assert!(!is_keccak_hex(&"a".repeat(63)));
-        assert!(!is_keccak_hex(&"a".repeat(65)));
-        assert!(!is_keccak_hex(&"g".repeat(64)));
+    fn lower_hex_validation() {
+        assert!(is_lower_hex(&"a".repeat(62), 62));
+        assert!(is_lower_hex("0f", 2));
+        assert!(!is_lower_hex("0F", 2)); // uppercase rejected
+        assert!(!is_lower_hex(&"a".repeat(61), 62));
+        assert!(!is_lower_hex(&"a".repeat(63), 62));
+        assert!(!is_lower_hex(&"g".repeat(62), 62));
     }
 
     #[test]

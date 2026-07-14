@@ -79,8 +79,8 @@ test('worker bundle — unknown hash and malformed paths are 404', async () => {
   assert.equal((await get(conn, `/worker/${h}.js`)).status, 404) // old route is gone
 })
 
-test('worker bundle — wrong-hash filename was refused at startup', async () => {
-  assert.match(gateway.logs.out, /REFUSING .*0{64}\.js/)
+test('worker bundle — wrong-hash path was refused at startup', async () => {
+  assert.match(gateway.logs.out, /REFUSING .*00\/0{62}/)
   assert.equal((await get(conn, `/keccak/00/${'0'.repeat(62)}`)).status, 404)
 })
 
