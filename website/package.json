@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "esbuild torJsGateway.js --bundle --format=esm --sourcemap --external:https://* --outfile=dist/torJsGateway.js",
-    "serve": "npm run build && python3 -m http.server 8080"
+    "serve": "npm run build && node serve.mjs"
   },
   "dependencies": {
     "@kpstreams/core": "^0.1.0",

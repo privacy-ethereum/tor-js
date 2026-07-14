@@ -21,7 +21,7 @@ npm run build     # bundles torJsGateway.js (+ @kpstreams deps) into dist/
 Then host the directory on any static file server. For local preview:
 
 ```
-npm run serve     # build + python3 -m http.server 8080
+npm run serve     # build + node serve.mjs (http://127.0.0.1:8080, PORT to override)
 ```
 
 ## Pages
