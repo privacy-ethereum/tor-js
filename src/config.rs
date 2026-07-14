@@ -67,7 +67,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             data_dir: default_data_dir(),
-            kps_port: 42298,
+            kps_port: 12298,
             kps_key_file: default_key_file(),
             keccak_dir: PathBuf::new(),
             advertised_addresses: Vec::new(),

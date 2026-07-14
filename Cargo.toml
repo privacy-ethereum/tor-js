@@ -2,19 +2,19 @@
 name = "tor-js-gateway"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.91"
 
 [dependencies]
 # Arti crates (crates.io)
-arti-client = { version = "0.40.0", features = ["tokio", "native-tls", "experimental-api"] }
-tor-checkable = "0.40.0"
-tor-circmgr = "0.40.0"
-tor-netdir = "0.40.0"
-tor-netdoc = "0.40.0"
-tor-rtcompat = { version = "0.40.0", features = ["tokio", "native-tls"] }
-tor-consdiff = "0.40.0"
-tor-dircommon = "0.40.0"
-tor-llcrypto = "0.40.0"
+arti-client = { version = "0.44.0", features = ["tokio", "native-tls", "experimental-api"] }
+tor-checkable = "0.44.0"
+tor-circmgr = "0.44.0"
+tor-netdir = "0.44.0"
+tor-netdoc = "0.44.0"
+tor-rtcompat = { version = "0.44.0", features = ["tokio", "native-tls"] }
+tor-consdiff = "0.44.0"
+tor-dircommon = "0.44.0"
+tor-llcrypto = "0.44.0"
 
 # KPS transport (QUIC + WebRTC on one UDP port)
 kps = { git = "https://github.com/privacy-ethereum/kps", rev = "0db55b985b708ab5e864a6af5d7d1a887a5e61b5" }

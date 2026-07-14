@@ -30,17 +30,22 @@ pub async fn sync_once(
     relay_allowlist: &RelayAllowlist,
 ) -> Result<Option<Lifetime>> {
     // --- Get a dedicated dir circuit for this sync cycle ---
-    let netdir = client
+    // As of arti 0.44 dirmgr()/circmgr() are fallible accessors.
+    let dirmgr = client
         .dirmgr()
+        .map_err(|e| anyhow::anyhow!("getting directory manager: {}", e))?;
+    let circmgr = client
+        .circmgr()
+        .map_err(|e| anyhow::anyhow!("getting circuit manager: {}", e))?;
+    let netdir = dirmgr
         .netdir(Timeliness::Timely)
         .map_err(|e| anyhow::anyhow!("getting network directory: {}", e))?;
-    let tunnel = client
-        .circmgr()
+    let tunnel = circmgr
         .get_or_launch_dir(DirInfo::Directory(&netdir))
         .await
         .map_err(|e| anyhow::anyhow!("getting dir circuit: {}", e))?;
     // Retire immediately so no other code reuses this circuit after we're done.
-    client.circmgr().retire_circ(&tunnel.unique_id());
+    circmgr.retire_circ(&tunnel.unique_id());
     tracing::info!("using dir circuit {}", tunnel.unique_id());
 
     // --- Fetch consensus (skip if still fresh) ---

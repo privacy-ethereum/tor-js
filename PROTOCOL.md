@@ -32,8 +32,8 @@ The key words MUST, MUST NOT, SHOULD, SHOULD NOT, MAY are per RFC 2119/8174.
 A KPS address is exactly as the KPS spec defines it:
 
 ```
-<ipv4>:<udp-port>:<certhash>          e.g.  198.51.100.7:42298:uEiAxk...9Qw
-[<ipv6>]:<udp-port>:<certhash>        e.g.  [2001:db8::7]:42298:uEiAxk...9Qw
+<ipv4>:<udp-port>:<certhash>          e.g.  198.51.100.7:12298:uEiAxk...9Qw
+[<ipv6>]:<udp-port>:<certhash>        e.g.  [2001:db8::7]:12298:uEiAxk...9Qw
 ```
 
 The certhash is multibase-`u` (base64url, no padding) — alphabet
@@ -51,7 +51,7 @@ path         = "/" path-absolute        ; per RFC 3986
 Example:
 
 ```
-kps:198.51.100.7:42298:uEiAxk...9Qw/keccak/19/4f04bde4925f6bbb0bd8bdfceca7251125eaa0664ce3c0c25dce2a1545338d
+kps:198.51.100.7:12298:uEiAxk...9Qw/keccak/19/4f04bde4925f6bbb0bd8bdfceca7251125eaa0664ce3c0c25dce2a1545338d
 ```
 
 Rules:
@@ -214,7 +214,7 @@ A server advertises what it supports at `GET /metadata.json`:
   "software": "tor-js-gateway",
   "version": "<server version>",
   "capabilities": ["metadata", "bootstrap", "connect", "worker-bundles", "relay-random"],
-  "addresses": ["198.51.100.7:42298:uEiAxk...9Qw", "[2001:db8::7]:42298:uEiAxk...9Qw"]
+  "addresses": ["198.51.100.7:12298:uEiAxk...9Qw", "[2001:db8::7]:12298:uEiAxk...9Qw"]
 }
 ```
 
