@@ -51,7 +51,7 @@ path         = "/" path-absolute        ; per RFC 3986
 Example:
 
 ```
-kps:198.51.100.7:42298:uEiAxk...9Qw/worker/194f04bde4925f6bbb0bd8bdfceca7251125eaa0664ce3c0c25dce2a1545338d.js
+kps:198.51.100.7:42298:uEiAxk...9Qw/keccak/19/4f04bde4925f6bbb0bd8bdfceca7251125eaa0664ce3c0c25dce2a1545338d
 ```
 
 Rules:
@@ -230,7 +230,7 @@ Defined routes:
 |---|---|---|
 | `metadata` | `GET /metadata.json` | `application/json` |
 | `bootstrap` | `GET /bootstrap.zip.br` | brotli-compressed zip; MUST include `X-Decompressed-Content-Length` and SHOULD include `Content-Length`. There is **no transparent decompression** over raw streams — clients decompress themselves. |
-| `worker-bundles` | `GET /worker/{keccak-hex}.js` | `{keccak-hex}` is 64 lowercase hex chars, no `0x`. The served bytes MUST satisfy `keccak256(bytes) == hash`. Immutable: `Cache-Control: public, max-age=31536000, immutable`. Unknown hash → `404`. |
+| `worker-bundles` | `GET /keccak/{hh}/{rest}` | `{hh}` is the first 2 and `{rest}` the remaining 62 of the object's 64 lowercase keccak256 hex chars, no `0x`. The served bytes MUST satisfy `keccak256(bytes) == hash`. Immutable: `Cache-Control: public, max-age=31536000, immutable`. Unknown hash → `404`. |
 | `connect` | `CONNECT <ip>:<port>` | §4 |
 | `relay-random` | `GET /relay/random` | as in the pre-KPS gateway; JSON descriptor of a random consensus relay |
 

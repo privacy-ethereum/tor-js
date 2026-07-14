@@ -40,8 +40,9 @@ pub struct Config {
     /// Path to the persistent KPS identity key (PEM; created by `init`)
     pub kps_key_file: PathBuf,
 
-    /// Directory of hash-named worker bundles (`<keccak256-hex>.js`);
-    /// empty disables the worker-bundles capability
+    /// Directory of hash-named worker bundles (`<keccak256-hex>.js`), served
+    /// at `/keccak/{hash[0..2]}/{hash[2..]}`; empty disables the
+    /// worker-bundles capability
     pub worker_bundles_dir: PathBuf,
 
     /// IP addresses to advertise in metadata.json (the UDP port and certhash
@@ -94,7 +95,8 @@ impl Config {
   "kps_key_file": {},
 
   // Directory of worker bundles named <keccak256-hex>.js, served at
-  // /worker/{{hash}}.js. Empty string disables the worker-bundles capability.
+  // /keccak/{{hash[0..2]}}/{{hash[2..]}}. Empty string disables the
+  // worker-bundles capability.
   "worker_bundles_dir": "",
 
   // IP addresses to advertise in metadata.json (the UDP port and certhash are

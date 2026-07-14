@@ -9,7 +9,7 @@ Built with [Arti](https://gitlab.torproject.org/tpo/core/arti), the Rust Tor imp
 - **KPS transport** — One UDP port serves both QUIC (native clients) and WebRTC (browsers). Clients dial `<ip>:<port>:<certhash>` directly: the certificate hash in the address *is* the server's identity, so there is no CA, no domain, and no DNS. Every exchange speaks [KPS-HTTP/1](PROTOCOL.md) — HTTP/1.1 syntax under a strict profile, one exchange per stream.
 - **Fast Bootstrap** — Serves the consensus, authority certificates, and microdescriptors as a single brotli-compressed archive at `/bootstrap.zip.br`. One fetch, decompressed by the client — no multi-step directory protocol, no round trips to authorities.
 - **TCP relay via CONNECT** — `CONNECT <ip>:<port>` on a KPS stream turns that stream into a raw byte pipe to a Tor relay. The client builds circuits and negotiates keys — the gateway only forwards opaque, encrypted data. Only consensus-advertised relay addresses are allowed.
-- **Worker bundle hosting** — Serves immutable, hash-addressed JavaScript bundles at `/worker/{keccak256-hex}.js`. Files are verified against their filename hash at startup; the gateway treats them as opaque bytes and never builds them.
+- **Worker bundle hosting** — Serves immutable, hash-addressed JavaScript bundles at `/keccak/{hash[0..2]}/{hash[2..]}`. Files are verified against their filename hash at startup; the gateway treats them as opaque bytes and never builds them.
 
 ## Quick start
 
@@ -73,7 +73,8 @@ Config is stored as JSON5 (supports comments and trailing commas) at `~/.config/
   "kps_key_file": "~/.local/share/tor-js-gateway/kps.key",
 
   // Directory of worker bundles named <keccak256-hex>.js, served at
-  // /worker/{hash}.js. Empty string disables the worker-bundles capability.
+  // /keccak/{hash[0..2]}/{hash[2..]}. Empty string disables the
+  // worker-bundles capability.
   "worker_bundles_dir": "",
 
   // IP addresses to advertise in metadata.json (the UDP port and certhash are
@@ -140,7 +141,7 @@ tor-js-gateway [OPTIONS] [COMMAND]
 |---|---|---|
 | `metadata` | `GET /metadata.json` | Protocol/version/capabilities/addresses discovery document |
 | `bootstrap` | `GET /bootstrap.zip.br` | Brotli bootstrap archive (raw bytes; clients decompress). Includes `X-Decompressed-Content-Length`; supports `ETag`/304 |
-| `worker-bundles` | `GET /worker/{keccak-hex}.js` | Immutable hash-addressed bundles (`Cache-Control: immutable`) |
+| `worker-bundles` | `GET /keccak/{hh}/{rest}` | Immutable hash-addressed bundles, path split after the first hex byte (`Cache-Control: immutable`) |
 | `connect` | `CONNECT <ip>:<port>` | TCP tunnel to a consensus relay |
 | `relay-random` | `GET /relay/random` | Random relay address from the consensus (IPv4 only if no IPv6) |
 

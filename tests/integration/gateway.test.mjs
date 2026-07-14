@@ -59,7 +59,8 @@ test('bootstrap.zip.br — bytes and headers', async () => {
 })
 
 test('worker bundle — happy path is immutable and length-delimited', async () => {
-  const res = await get(conn, `/worker/${fixtures.bundleHash}.js`)
+  const h = fixtures.bundleHash
+  const res = await get(conn, `/keccak/${h.slice(0, 2)}/${h.slice(2)}`)
   assert.equal(res.status, 200)
   assert.equal(res.headers['content-type'], 'text/javascript')
   assert.equal(res.headers['cache-control'], 'public, max-age=31536000, immutable')
@@ -67,16 +68,20 @@ test('worker bundle — happy path is immutable and length-delimited', async () 
   assert.deepEqual(res.body, fixtures.bundleBytes)
 })
 
-test('worker bundle — unknown hash and malformed names are 404', async () => {
-  assert.equal((await get(conn, `/worker/${'1'.repeat(64)}.js`)).status, 404)
-  assert.equal((await get(conn, `/worker/${'a'.repeat(63)}.js`)).status, 404)
-  assert.equal((await get(conn, `/worker/${'A'.repeat(64)}.js`)).status, 404)
-  assert.equal((await get(conn, '/worker/index.js')).status, 404)
+test('worker bundle — unknown hash and malformed paths are 404', async () => {
+  assert.equal((await get(conn, `/keccak/11/${'1'.repeat(62)}`)).status, 404)
+  assert.equal((await get(conn, `/keccak/aa/${'a'.repeat(61)}`)).status, 404) // too short
+  assert.equal((await get(conn, `/keccak/AA/${'a'.repeat(62)}`)).status, 404) // uppercase
+  assert.equal((await get(conn, `/keccak/${'a'.repeat(64)}`)).status, 404) // unsharded
+  assert.equal((await get(conn, `/keccak/a/${'a'.repeat(63)}`)).status, 404) // bad split
+  const h = fixtures.bundleHash
+  assert.equal((await get(conn, `/keccak/${h.slice(0, 2)}/${h.slice(2)}.js`)).status, 404) // extension
+  assert.equal((await get(conn, `/worker/${h}.js`)).status, 404) // old route is gone
 })
 
 test('worker bundle — wrong-hash filename was refused at startup', async () => {
   assert.match(gateway.logs.out, /REFUSING .*0{64}\.js/)
-  assert.equal((await get(conn, `/worker/${'0'.repeat(64)}.js`)).status, 404)
+  assert.equal((await get(conn, `/keccak/00/${'0'.repeat(62)}`)).status, 404)
 })
 
 test('relay/random — served from the preloaded allowlist', async () => {

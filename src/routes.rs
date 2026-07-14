@@ -96,7 +96,7 @@ pub fn build_router(gateway: Arc<Gateway>) -> Router {
     Router::new()
         .route("/metadata.json", get(handle_metadata))
         .route("/bootstrap.zip.br", get(handle_bootstrap_zip_br))
-        .route("/worker/{file}", get(handle_worker_bundle))
+        .route("/keccak/{prefix}/{rest}", get(handle_worker_bundle))
         .route("/relay/random", get(handle_random_relay))
         .with_state(gateway)
 }
@@ -111,15 +111,20 @@ async fn handle_metadata(State(gw): State<Arc<Gateway>>) -> Response {
         .into_response()
 }
 
-/// GET /worker/{keccak-hex}.js — immutable, hash-verified worker bundles.
+/// GET /keccak/{hash[0..2]}/{hash[2..]} — immutable, hash-verified worker
+/// bundles, sharded by the first hex byte.
 async fn handle_worker_bundle(
     State(gw): State<Arc<Gateway>>,
-    Path(file): Path<String>,
+    Path((prefix, rest)): Path<(String, String)>,
 ) -> Response {
-    let Some(hash) = file.strip_suffix(".js").filter(|h| is_keccak_hex(h)) else {
+    if prefix.len() != 2 || rest.len() != 62 {
         return StatusCode::NOT_FOUND.into_response();
-    };
-    match gw.bundles.get(hash) {
+    }
+    let hash = format!("{prefix}{rest}");
+    if !is_keccak_hex(&hash) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match gw.bundles.get(&hash) {
         Some(bytes) => (
             StatusCode::OK,
             [

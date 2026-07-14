@@ -129,8 +129,27 @@ fn text_response(status: StatusCode, msg: &str) -> Response<Body> {
         .unwrap()
 }
 
+/// Reconstructed size of the request head (request line + header fields).
+/// hyper's `max_buf_size` is a soft cap — a head that arrives in one read can
+/// exceed it — so §3.6 is also enforced here, where we can still answer `431`.
+fn header_block_size(req: &Request<Incoming>) -> usize {
+    let request_line =
+        req.method().as_str().len() + req.uri().to_string().len() + " HTTP/1.1\r\n".len() + 1;
+    req.headers()
+        .iter()
+        .fold(request_line, |n, (name, value)| n + name.as_str().len() + value.len() + 4)
+}
+
 /// Per-request dispatch: profile checks, then CONNECT or the router.
 async fn handle_request(req: Request<Incoming>, ctx: ConnCtx) -> Response<Body> {
+    // §3.6: header block capped at 16 KiB; overflow → 431, then close.
+    if header_block_size(&req) > HEADER_CAP {
+        return text_response(
+            StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+            "header block exceeds 16 KiB",
+        );
+    }
+
     // §3.4: Transfer-Encoding is forbidden in any message, any value.
     if req.headers().contains_key(header::TRANSFER_ENCODING) {
         return text_response(StatusCode::BAD_REQUEST, "Transfer-Encoding is not permitted");
