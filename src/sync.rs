@@ -243,7 +243,8 @@ pub async fn sync_once(
     Ok(Some(lifetime))
 }
 
-/// Create `bootstrap.zip.br`: a store-only zip of the bootstrap files, brotli-compressed.
+/// Create `bootstrap.zip.zst`: a store-only zip of the bootstrap files,
+/// zstd-compressed (level 9).
 fn write_bootstrap_archive(dir: &Path, consensus: &[u8], certs: &[u8], microdescs: &[u8]) -> Result<()> {
     use zip::write::SimpleFileOptions;
     use zip::CompressionMethod;
@@ -266,22 +267,8 @@ fn write_bootstrap_archive(dir: &Path, consensus: &[u8], certs: &[u8], microdesc
         zip.finish()?;
     }
 
-    // Brotli-compress the zip
-    let mut br_buf = Vec::new();
-    {
-        let mut compressor = brotli::CompressorWriter::new(&mut br_buf, 4096, 6, 22);
-        compressor.write_all(&zip_buf)?;
-        compressor.flush()?;
-    }
-
-    // Gzip-compress the zip
-    let mut gz_buf = Vec::new();
-    {
-        let mut encoder =
-            flate2::write::GzEncoder::new(&mut gz_buf, flate2::Compression::default());
-        encoder.write_all(&zip_buf)?;
-        encoder.finish()?;
-    }
+    // Zstd-compress the zip (level 9).
+    let zst_buf = zstd::encode_all(&zip_buf[..], 9).context("zstd-compressing bootstrap archive")?;
 
     // ETag: SHA3-256 of the uncompressed zip archive
     use digest::Digest;
@@ -289,13 +276,11 @@ fn write_bootstrap_archive(dir: &Path, consensus: &[u8], certs: &[u8], microdesc
     atomic_write(dir, "bootstrap.etag", etag.as_bytes())?;
 
     atomic_write(dir, "bootstrap.zip", &zip_buf)?;
-    atomic_write(dir, "bootstrap.zip.gz", &gz_buf)?;
-    atomic_write(dir, "bootstrap.zip.br", &br_buf)?;
+    atomic_write(dir, "bootstrap.zip.zst", &zst_buf)?;
     tracing::info!(
-        "wrote bootstrap.zip ({} bytes), .gz ({} bytes), .br ({} bytes)",
+        "wrote bootstrap.zip ({} bytes), .zst ({} bytes)",
         zip_buf.len(),
-        gz_buf.len(),
-        br_buf.len(),
+        zst_buf.len(),
     );
     Ok(())
 }

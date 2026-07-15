@@ -629,7 +629,7 @@ function onEvent(ev) {
     }
     case 'decompress-start':
       stamps.decompress = performance.now();
-      decompressRow = logStep('Decompressing brotli\u2026');
+      decompressRow = logStep('Decompressing zstd\u2026');
       decompressRow.msg.innerHTML = '';
       decompressRow._bar = document.createElement('div');
       decompressRow._bar.className = 'progress-bar';

@@ -12,6 +12,7 @@
 
 import { dial } from '@kpstreams/webrtc-client';
 import { parseAddress } from '@kpstreams/core';
+import { decompress as zstdDecompress, Decompress as ZstdDecompress } from 'fzstd';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -329,11 +330,11 @@ export class RelaySocket {
 // --- Bootstrap ---
 
 /**
- * Download bootstrap.zip.br from a gateway and decompress it.
+ * Download bootstrap.zip.zst from a gateway and decompress it.
  *
  * There is no transparent decompression on raw KPS streams: the gateway
- * always serves raw brotli bytes and the client decompresses via WASM
- * (streaming when the library supports it).
+ * always serves raw zstd bytes and the client decompresses them here with
+ * fzstd (pure JS, streaming as chunks arrive).
  *
  * Events emitted:
  * - { type: "fetch-start" }
@@ -341,7 +342,7 @@ export class RelaySocket {
  * - { type: "fetch-done", bytes }
  * - { type: "decompress-start" }
  * - { type: "decompress-progress", loaded, total }   (decompressed bytes)
- * - { type: "decompress-done", method: "wasm", bytes }
+ * - { type: "decompress-done", method: "zstd", bytes }
  *
  * `total` for fetch-progress comes from `Content-Length` and for
  * decompress-progress from `X-Decompressed-Content-Length` (both advisory
@@ -355,7 +356,7 @@ export async function smartBootstrapDownload(gateway, onEvent) {
   const gw = typeof gateway === 'string' ? new Gateway(gateway) : gateway;
   onEvent?.({ type: 'fetch-start' });
 
-  const res = await gw.fetchStream('/bootstrap.zip.br');
+  const res = await gw.fetchStream('/bootstrap.zip.zst');
   if (res.status !== 200) {
     throw new Error(`bootstrap fetch failed: HTTP ${res.status} ${res.statusText}`);
   }
@@ -364,15 +365,14 @@ export async function smartBootstrapDownload(gateway, onEvent) {
   const decompressedTotal =
     parseInt(res.headers['x-decompressed-content-length'], 10) || undefined;
 
-  const { default: init } = await import(
-    'https://cdn.jsdelivr.net/npm/brotli-wasm@3.0.1/index.web.js'
-  );
-  const brotli = await init;
-
-  // Stream: decompress chunks as they arrive, emitting both progress axes.
-  const canStream = !!brotli.DecompressStream;
-  const stream = canStream ? new brotli.DecompressStream() : null;
+  // Stream: fzstd emits decompressed chunks as compressed ones are pushed.
   const outChunks = [];
+  let outLen = 0;
+  const dec = new ZstdDecompress((chunk) => {
+    outChunks.push(chunk);
+    outLen += chunk.length;
+  });
+
   const inChunks = [];
   let compressedLoaded = 0;
   let decompressStarted = false;
@@ -384,28 +384,19 @@ export async function smartBootstrapDownload(gateway, onEvent) {
     compressedLoaded += chunk.byteLength;
     onEvent?.({ type: 'fetch-progress', loaded: compressedLoaded, total: compressedTotal });
 
-    if (stream && !streamFailed) {
+    if (!streamFailed) {
       if (!decompressStarted) {
         decompressStarted = true;
         onEvent?.({ type: 'decompress-start' });
       }
       try {
-        let consumed = 0;
-        for (;;) {
-          const result = stream.decompress(chunk.subarray(consumed), 65536);
-          if (result.buf.length > 0) outChunks.push(result.buf);
-          consumed += result.input_offset;
-          if (result.code === 1 || result.code === 2) break;
-        }
-        onEvent?.({
-          type: 'decompress-progress',
-          loaded: stream.total_out(),
-          total: decompressedTotal,
-        });
+        dec.push(chunk, false);
+        onEvent?.({ type: 'decompress-progress', loaded: outLen, total: decompressedTotal });
       } catch (e) {
-        console.warn('DecompressStream failed, falling back to one-shot:', e);
+        console.warn('zstd stream failed, falling back to one-shot:', e);
         streamFailed = true;
         outChunks.length = 0;
+        outLen = 0;
       }
     }
   }
@@ -413,16 +404,20 @@ export async function smartBootstrapDownload(gateway, onEvent) {
   onEvent?.({ type: 'fetch-done', bytes: compressedLoaded });
 
   let decompressed;
-  if (stream && !streamFailed) {
-    decompressed = concat(outChunks, stream.total_out());
-  } else {
-    if (!decompressStarted) {
-      onEvent?.({ type: 'decompress-start' });
+  if (!streamFailed) {
+    try {
+      dec.push(new Uint8Array(0), true); // finalize the frame
+      decompressed = concat(outChunks, outLen);
+    } catch (e) {
+      console.warn('zstd finalize failed, falling back to one-shot:', e);
+      streamFailed = true;
     }
-    decompressed = brotli.decompress(concat(inChunks, compressedLoaded));
+  }
+  if (streamFailed) {
+    decompressed = zstdDecompress(concat(inChunks, compressedLoaded));
   }
 
-  onEvent?.({ type: 'decompress-done', method: 'wasm', bytes: decompressed.byteLength });
+  onEvent?.({ type: 'decompress-done', method: 'zstd', bytes: decompressed.byteLength });
   return decompressed;
 }
 

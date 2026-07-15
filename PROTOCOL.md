@@ -20,7 +20,7 @@ with HTTP/1.1's text syntax, so standard HTTP software (hyper, curl through a
 TCP↔KPS bridge) handles it unmodified. One server multiplexes:
 
 - serving the anon-rpc worker bundle (hash-addressed immutable objects);
-- serving `bootstrap.zip.br` (Tor directory fast-bootstrap archive);
+- serving `bootstrap.zip.zst` (Tor directory fast-bootstrap archive);
 - proxying TCP to Tor relays (`CONNECT`);
 - capability discovery (`/metadata.json`);
 - future capabilities, as new routes/methods, without protocol changes.
@@ -81,7 +81,7 @@ The client writes, in order:
 
 1. A request line: `METHOD SP request-target SP HTTP/1.1 CRLF`.
    - For origin-form requests the target is an absolute path (optionally with
-     query), e.g. `GET /bootstrap.zip.br HTTP/1.1`.
+     query), e.g. `GET /bootstrap.zip.zst HTTP/1.1`.
    - For `CONNECT` the target is authority-form, §4.
 2. Header fields, one per line, `CRLF`-terminated, then an empty line (`CRLF`).
 3. An optional body: raw bytes until the client half-closes.
@@ -229,7 +229,7 @@ Defined routes:
 | Capability | Route | Notes |
 |---|---|---|
 | `metadata` | `GET /metadata.json` | `application/json` |
-| `bootstrap` | `GET /bootstrap.zip.br` | brotli-compressed zip; MUST include `X-Decompressed-Content-Length` and SHOULD include `Content-Length`. There is **no transparent decompression** over raw streams — clients decompress themselves. |
+| `bootstrap` | `GET /bootstrap.zip.zst` | zstd-compressed zip; MUST include `X-Decompressed-Content-Length` and SHOULD include `Content-Length`. There is **no transparent decompression** over raw streams — clients decompress themselves. |
 | `worker-bundles` | `GET /keccak/{hh}/{rest}` | `{hh}` is the first 2 and `{rest}` the remaining 62 of the object's 64 lowercase keccak256 hex chars, no `0x`. The served bytes MUST satisfy `keccak256(bytes) == hash`. Immutable: `Cache-Control: public, max-age=31536000, immutable`. Unknown hash → `404`. |
 | `connect` | `CONNECT <ip>:<port>` | §4 |
 | `relay-random` | `GET /relay/random` | as in the pre-KPS gateway; JSON descriptor of a random consensus relay |

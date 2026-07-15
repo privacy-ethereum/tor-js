@@ -7,7 +7,7 @@ Built with [Arti](https://gitlab.torproject.org/tpo/core/arti), the Rust Tor imp
 ## Features
 
 - **KPS transport** — One UDP port serves both QUIC (native clients) and WebRTC (browsers). Clients dial `<ip>:<port>:<certhash>` directly: the certificate hash in the address *is* the server's identity, so there is no CA, no domain, and no DNS. Every exchange speaks [KPS-HTTP/1](PROTOCOL.md) — HTTP/1.1 syntax under a strict profile, one exchange per stream.
-- **Fast Bootstrap** — Serves the consensus, authority certificates, and microdescriptors as a single brotli-compressed archive at `/bootstrap.zip.br`. One fetch, decompressed by the client — no multi-step directory protocol, no round trips to authorities.
+- **Fast Bootstrap** — Serves the consensus, authority certificates, and microdescriptors as a single zstd-compressed archive at `/bootstrap.zip.zst`. One fetch, decompressed by the client — no multi-step directory protocol, no round trips to authorities.
 - **TCP relay via CONNECT** — `CONNECT <ip>:<port>` on a KPS stream turns that stream into a raw byte pipe to a Tor relay. The client builds circuits and negotiates keys — the gateway only forwards opaque, encrypted data. Only consensus-advertised relay addresses are allowed.
 - **Worker bundle hosting** — Serves immutable, hash-addressed JavaScript bundles at `/keccak/{hash[0..2]}/{hash[2..]}`, from a disk tree with the same sharded layout. Each file is verified against its path-derived hash on request (lazily, so objects can be added without a restart) and the result cached; the gateway treats them as opaque bytes and never builds them.
 
@@ -141,7 +141,7 @@ tor-js-gateway [OPTIONS] [COMMAND]
 | Capability | Route | Description |
 |---|---|---|
 | `metadata` | `GET /metadata.json` | Protocol/version/capabilities/addresses discovery document |
-| `bootstrap` | `GET /bootstrap.zip.br` | Brotli bootstrap archive (raw bytes; clients decompress). Includes `X-Decompressed-Content-Length`; supports `ETag`/304 |
+| `bootstrap` | `GET /bootstrap.zip.zst` | Zstd bootstrap archive (raw bytes; clients decompress). Includes `X-Decompressed-Content-Length`; supports `ETag`/304 |
 | `worker-bundles` | `GET /keccak/{hh}/{rest}` | Immutable hash-addressed bundles, path split after the first hex byte (`Cache-Control: immutable`) |
 | `connect` | `CONNECT <ip>:<port>` | TCP tunnel to a consensus relay |
 | `relay-random` | `GET /relay/random` | Random relay address from the consensus (IPv4 only if no IPv6) |
@@ -180,7 +180,7 @@ Each sync cycle:
 5. Fetches only missing microdescriptors in batches of 500
 6. Updates the relay allowlist for CONNECT
 7. Writes all files atomically to the data directory
-8. Builds `bootstrap.zip` with pre-compressed variants
+8. Builds `bootstrap.zip` and its zstd-compressed variant
 
 ## Data files
 
@@ -193,8 +193,7 @@ After a successful sync, the data directory contains:
 | `microdescs.txt` | Concatenated microdescriptors |
 | `metadata.json` | Sync metadata (not served; `/metadata.json` is generated) |
 | `bootstrap.zip` | Uncompressed zip of the above `.txt` files |
-| `bootstrap.zip.br` | Brotli-compressed (quality 6) — this is what `/bootstrap.zip.br` serves |
-| `bootstrap.zip.gz` | Gzip-compressed |
+| `bootstrap.zip.zst` | Zstd-compressed (level 9) — this is what `/bootstrap.zip.zst` serves |
 | `bootstrap.etag` | SHA3-256 hash for ETag |
 
 All files are written atomically via `.tmp` intermediates.

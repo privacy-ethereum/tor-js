@@ -29,7 +29,7 @@ npm run serve     # build + node serve.mjs (http://127.0.0.1:8080, PORT to overr
 | Page | What it does |
 |---|---|
 | `index.html` | Landing page; set the gateway address, see its `/metadata.json` (dialed live over KPS) |
-| `bootstrap.html` | Downloads `/bootstrap.zip.br` over a KPS stream with progress, decompresses via WASM brotli (the only path — there is no transparent decompression on raw streams), and renders the consensus |
+| `bootstrap.html` | Downloads `/bootstrap.zip.zst` over a KPS stream with progress, decompresses via fzstd (pure JS — there is no transparent decompression on raw streams), and renders the consensus |
 | `connect.html` | Opens `CONNECT` tunnels to consensus relays on KPS streams; hex console per tunnel |
 
 ## Library
@@ -41,6 +41,6 @@ npm run serve     # build + node serve.mjs (http://127.0.0.1:8080, PORT to overr
   connection; `fetch`/`fetchStream` run one KPS-HTTP/1 exchange per stream.
 - `gateway.connect(target)` → `RelaySocket` — a `CONNECT` tunnel
   (`send`/`onmessage`/`onclose`/`closeWrite`/`close`).
-- `bootstrap(gatewayOrAddress, onEvent)` — download + WASM-brotli decompress +
+- `bootstrap(gatewayOrAddress, onEvent)` — download + zstd (fzstd) decompress +
   parse, with progress events driven by `Content-Length` (compressed) and
   `X-Decompressed-Content-Length` (decompressed).

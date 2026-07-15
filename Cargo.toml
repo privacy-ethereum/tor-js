@@ -45,8 +45,7 @@ sha3 = "0.10"
 digest = "0.10"
 hex = "0.4"
 zip = { version = "2", default-features = false }
-brotli = "8"
-flate2 = "1"
+zstd = "0.13"
 
 # webrtc-sctp carries a KPS fix (drain the reassembly queue before honoring
 # read_shutdown) pending upstream: without it, a peer that writes and promptly

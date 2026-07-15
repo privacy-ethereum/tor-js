@@ -7,7 +7,7 @@ import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { brotliCompressSync } from 'node:zlib'
+import { zstdCompressSync } from 'node:zlib'
 import { keccak_256 } from '@noble/hashes/sha3'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -31,7 +31,7 @@ export async function makeFixtures({ allowedTargets = [] } = {}) {
   // The gateway serves the bootstrap archive opaquely, so arbitrary bytes do.
   const bootstrapZip = randomBytes(1024)
   await writeFile(join(dataDir, 'bootstrap.zip'), bootstrapZip)
-  await writeFile(join(dataDir, 'bootstrap.zip.br'), brotliCompressSync(bootstrapZip))
+  await writeFile(join(dataDir, 'bootstrap.zip.zst'), zstdCompressSync(bootstrapZip))
 
   // Consensus 'r' lines pre-populate the relay allowlist at startup.
   const rLines = allowedTargets

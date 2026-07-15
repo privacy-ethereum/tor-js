@@ -66,7 +66,7 @@ fn keccak256_hex(bytes: &[u8]) -> String {
 pub fn build_router(gateway: Arc<Gateway>) -> Router {
     Router::new()
         .route("/metadata.json", get(handle_metadata))
-        .route("/bootstrap.zip.br", get(handle_bootstrap_zip_br))
+        .route("/bootstrap.zip.zst", get(handle_bootstrap_zip_zst))
         .route("/keccak/{prefix}/{rest}", get(handle_worker_bundle))
         .route("/relay/random", get(handle_random_relay))
         .with_state(gateway)
@@ -176,11 +176,11 @@ fn check_not_modified(headers: &HeaderMap, etag: &str) -> Option<Response> {
     }
 }
 
-/// GET /bootstrap.zip.br — the brotli-compressed bootstrap archive, served as
+/// GET /bootstrap.zip.zst — the zstd-compressed bootstrap archive, served as
 /// raw bytes (there is no transparent decompression over KPS streams; clients
 /// decompress themselves). Includes `X-Decompressed-Content-Length` with the
 /// uncompressed zip size for download progress. Supports ETag/304.
-async fn handle_bootstrap_zip_br(
+async fn handle_bootstrap_zip_zst(
     State(gw): State<Arc<Gateway>>,
     headers: HeaderMap,
 ) -> Response {
@@ -190,7 +190,7 @@ async fn handle_bootstrap_zip_br(
             return not_modified;
         }
     }
-    let data = match tokio::fs::read(gw.data_dir.join("bootstrap.zip.br")).await {
+    let data = match tokio::fs::read(gw.data_dir.join("bootstrap.zip.zst")).await {
         Ok(d) => d,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };

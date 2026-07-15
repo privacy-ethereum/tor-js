@@ -46,8 +46,8 @@ test('metadata.json — capability discovery', async () => {
   assert.deepEqual(meta.addresses, [gateway.address])
 })
 
-test('bootstrap.zip.br — bytes and headers', async () => {
-  const res = await get(conn, '/bootstrap.zip.br')
+test('bootstrap.zip.zst — bytes and headers', async () => {
+  const res = await get(conn, '/bootstrap.zip.zst')
   assert.equal(res.status, 200)
   assert.equal(res.headers['content-length'], String(res.body.length))
   assert.equal(
@@ -55,8 +55,8 @@ test('bootstrap.zip.br — bytes and headers', async () => {
     String(fixtures.bootstrapZip.length)
   )
   assert.ok(!('transfer-encoding' in res.headers), 'no chunked responses (§3.4)')
-  const { brotliDecompressSync } = await import('node:zlib')
-  assert.deepEqual(brotliDecompressSync(res.body), fixtures.bootstrapZip)
+  const { zstdDecompressSync } = await import('node:zlib')
+  assert.deepEqual(zstdDecompressSync(res.body), fixtures.bootstrapZip)
 })
 
 test('worker bundle — happy path is immutable and length-delimited', async () => {
