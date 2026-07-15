@@ -27,8 +27,8 @@ impl<F: Future> Future for SendFut<F> {
 // fork. The traits below are re-exported at the tor_rtcompat crate root...
 use tor_rtcompat::{
     Blocking, CertifiedConn, CoarseInstant, CoarseTimeProvider, NetStreamListener,
-    NetStreamProvider, RealCoarseTimeProvider, SleepProvider, StreamOps, TcpListenOptions,
-    TlsProvider, UdpProvider, UdpSocket, UnixListenOptions,
+    NetStreamProvider, RealCoarseTimeProvider, SleepProvider, StreamOps, TcpConnectOptions,
+    TcpListenOptions, TlsProvider, UdpProvider, UdpSocket, UnixConnectOptions, UnixListenOptions,
 };
 // ...while these TLS traits are only reachable via the public `tls` submodule.
 use tor_rtcompat::tls::{TlsAcceptorSettings, TlsConnector};
@@ -428,9 +428,16 @@ impl NetStreamListener<unix::SocketAddr> for StubListener {
 impl NetStreamProvider<SocketAddr> for WasmRuntime {
     type Stream = JsProxyStream;
     type Listener = StubListener;
+    type ConnectOptions = TcpConnectOptions;
     type ListenOptions = TcpListenOptions;
 
-    async fn connect(&self, addr: &SocketAddr) -> IoResult<Self::Stream> {
+    // Socket options can't be applied to JS-proxied connections, so they are
+    // ignored here, as with listen() below.
+    async fn connect(
+        &self,
+        addr: &SocketAddr,
+        _options: &Self::ConnectOptions,
+    ) -> IoResult<Self::Stream> {
         let connect_fn = self.connect_fn.as_ref().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -473,9 +480,14 @@ impl NetStreamProvider<SocketAddr> for WasmRuntime {
 impl NetStreamProvider<unix::SocketAddr> for WasmRuntime {
     type Stream = JsProxyStream;
     type Listener = StubListener;
+    type ConnectOptions = UnixConnectOptions;
     type ListenOptions = UnixListenOptions;
 
-    async fn connect(&self, _addr: &unix::SocketAddr) -> IoResult<Self::Stream> {
+    async fn connect(
+        &self,
+        _addr: &unix::SocketAddr,
+        _options: &Self::ConnectOptions,
+    ) -> IoResult<Self::Stream> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "WasmRuntime does not support Unix sockets",
