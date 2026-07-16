@@ -27,10 +27,10 @@ const client = new TorClient({
   // gateway: '198.51.100.7:12298:uEiAxk...9Qw',
 
   // (A gateway's KPS address, "ip:port:certhash" — printed by
-  // tor-js-gateway at startup. In NodeJS you can leave this
+  // the gateway at startup. In NodeJS you can leave this
   // commented, but browsers don't have raw TCP and so require
-  // help to connect to the tor network.
-  // https://github.com/privacy-ethereum/tor-js-gateway)
+  // help to connect to the tor network. See the Gateway
+  // section below.)
 });
 
 const response = await client.fetch('https://check.torproject.org/api/ip');
@@ -108,6 +108,14 @@ Close the client and release resources. Also available as `Symbol.dispose` for u
 } // automatically closed
 ```
 
+## Gateway
+
+Browsers can't open raw TCP sockets, so to reach Tor relays from a browser you connect through a **gateway** — a small server that proxies relay connections and serves a fast-bootstrap snapshot of the Tor directory. (In Node.js/Deno tor-js opens TCP directly, so a gateway is optional there — used only for fast bootstrap.)
+
+The client dials the gateway by its **KPS address**, `ip:port:certhash` (printed by the gateway at startup), over [KPS](https://github.com/privacy-ethereum/kps) — WebRTC in browsers, QUIC in Node.js. Each Tor relay connection is an HTTP `CONNECT` tunnel on its own KPS stream; fast bootstrap is a zstd-compressed directory snapshot fetched over the same connection. The full wire protocol is specified in [PROTOCOL.md](PROTOCOL.md).
+
+The gateway lives in this repo at [`crates/tor-js-gateway/`](crates/tor-js-gateway/) — see [its README](crates/tor-js-gateway/README.md) to build and run your own. The [live demo](https://privacy-ethereum.github.io/tor-js/) uses a public gateway that is for demonstration only (limited capacity, may disappear at any time); host your own for anything real.
+
 ## Singleton
 
 For simple use cases, import the singleton wrapper:
@@ -121,7 +129,7 @@ import { tor } from 'tor-js/singleton';
 //   (A gateway's KPS address, "ip:port:certhash". In NodeJS
 //   you can leave this commented, but browsers don't have
 //   raw TCP and so require help to connect to the tor network.
-//   https://github.com/privacy-ethereum/tor-js-gateway)
+//   See the Gateway section above.)
 // });
 
 const response = await tor.fetch('https://check.torproject.org/api/ip');
