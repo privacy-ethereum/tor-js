@@ -3,7 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const pkgDir = resolve(__dirname, 'rust/pkg');
+const pkgDir = resolve(__dirname, 'crates/tor-js-wasm/pkg');
 
 export default defineConfig({
   entry: {

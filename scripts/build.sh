@@ -28,12 +28,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "Building tor-js WASM ($PROFILE)..."
-wasm-pack build rust --target web $PROFILE
+wasm-pack build crates/tor-js-wasm --target web $PROFILE
 
 # Copy the crate README into the wasm-pack output (pkg/).
-cp rust/README.md rust/pkg/
+cp crates/tor-js-wasm/README.md crates/tor-js-wasm/pkg/
 
-echo "WASM package available at: rust/pkg/"
+echo "WASM package available at: crates/tor-js-wasm/pkg/"
 
 # Build the TypeScript wrapper. Call build.mjs directly rather than
 # `npm run build` to avoid recursing back into this script.

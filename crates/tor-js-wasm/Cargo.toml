@@ -79,43 +79,36 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 # Error handling
 console_error_panic_hook = "0.1"
 
-# Random number generation
-# These entries are not used directly in code. As the WASM binary root, tor-js must enable
-# the JS backend feature on every getrandom version present in the dep graph, because
-# getrandom needs to call crypto.getRandomValues() on WASM instead of OS primitives.
-# Cargo's feature unification propagates the feature to all transitive users of each version.
-# Three versions are needed because different parts of the dep graph haven't converged yet:
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+
+# Random number generation — wasm32 only. These MUST be target-gated: in the
+# workspace, Cargo feature unification would otherwise force the JS randomness
+# backend onto the native gateway crate (which needs OS primitives).
+# These entries aren't used directly in code. As the WASM binary root, tor-js
+# must enable the JS backend feature on every getrandom version in the dep
+# graph, because getrandom needs to call crypto.getRandomValues() on WASM
+# instead of OS primitives. Cargo's feature unification propagates the feature
+# to all transitive users of each version. Three versions are needed because
+# different parts of the dep graph haven't converged yet:
 #   0.2 (js):     rand_core 0.6.4 → getrandom 0.2  (rustls-rustcrypto + tor-llcrypto's rand_core_06 compat alias)
 #   0.3 (wasm_js): tor-basic-utils, uuid, rand_core 0.9.x, etc.
 #   0.4 (wasm_js): tor-bytes and tor-llcrypto list it directly under [target.wasm32-unknown-unknown.dependencies]
 # consolidate on 0.4 once older versions are gone:
 #   drop 0.2 once rustls-rustcrypto updates to rand_core 0.9+ and tor-llcrypto drops rand_core_06;
 #   drop 0.3 once tor-basic-utils, uuid, etc. update to getrandom 0.4.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
 getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-hex = "0.4"
-
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
-# When this crate lived in the arti workspace it inherited these from the
-# workspace root's [profile.release]. As a standalone crate it's the build
-# root, so it must declare them itself — otherwise Cargo's defaults
-# (lto = false, codegen-units = 16) produce a ~20% larger WASM binary before
-# wasm-opt even runs. Matches voltrevo/arti's root Cargo.toml.
-[profile.release]
-lto = true
-codegen-units = 1
-
-# Matches voltrevo/arti's root Cargo.toml: slotmap-careful's safety checks
-# rely on not being over-optimized, so it's pinned to opt-level 2.
-[profile.release.package.slotmap-careful]
-opt-level = 2
+# [profile.release] lives in the workspace root Cargo.toml (Cargo ignores
+# profiles declared in workspace members).
 
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]

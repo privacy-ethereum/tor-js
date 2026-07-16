@@ -3,9 +3,9 @@ node_modules/
 dist/
 *.generated.*
 
-# Rust / wasm-pack
-rust/target/
-rust/pkg/
+# Rust / wasm-pack (cargo target dirs at any depth; wasm-pack output beside the crate)
+target/
+crates/tor-js-wasm/pkg/
 
 # GitHub Pages showcase assembly (examples/showcase/run.sh, CI _site)
 _site/

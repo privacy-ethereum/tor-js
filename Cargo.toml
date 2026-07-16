@@ -1,0 +1,26 @@
+# Workspace root for the tor-js monorepo.
+#
+# Members:
+#   crates/tor-js-wasm     — the browser/Node Tor client compiled to WASM
+#                            (published to npm as `tor-js`; built via wasm-pack)
+#   crates/tor-js-gateway  — the KPS gateway server (native binary)
+#
+# The wasm crate only builds for wasm32 (it depends on web-sys/js-sys), so it
+# is excluded from default-members: plain `cargo build`/`cargo test` operate on
+# the gateway, while the wasm crate is built explicitly via wasm-pack (see the
+# npm `build` script / scripts/build.sh). Keeping them separate also scopes
+# Cargo feature unification per crate.
+[workspace]
+resolver = "2"
+members = ["crates/tor-js-wasm", "crates/tor-js-gateway"]
+default-members = ["crates/tor-js-gateway"]
+
+# Applies to both crates. lto/codegen-units shrink the WASM binary ~20% before
+# wasm-opt runs; slotmap-careful's safety checks rely on not being
+# over-optimized. Matches voltrevo/arti's root Cargo.toml.
+[profile.release]
+lto = true
+codegen-units = 1
+
+[profile.release.package.slotmap-careful]
+opt-level = 2

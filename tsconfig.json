@@ -15,7 +15,7 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "paths": {
-      "#wasm": ["./rust/pkg/tor_js.d.ts"],
+      "#wasm": ["./crates/tor-js-wasm/pkg/tor_js.d.ts"],
       "#wasm-base64-data": ["./src/wasm-base64-data.d.ts"]
     }
   },

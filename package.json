@@ -50,7 +50,7 @@
   "scripts": {
     "build": "bash scripts/build.sh --release",
     "build:ts": "node build.mjs",
-    "clean": "rm -rf dist rust/pkg rust/target",
+    "clean": "rm -rf dist crates/tor-js-wasm/pkg target",
     "showcase": "bash examples/showcase/run.sh"
   },
   "author": "Andrew Morris",

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const pkgDir = resolve(__dirname, 'rust/pkg');
+const pkgDir = resolve(__dirname, 'crates/tor-js-wasm/pkg');
 const distDir = resolve(__dirname, 'dist');
 
 function main() {

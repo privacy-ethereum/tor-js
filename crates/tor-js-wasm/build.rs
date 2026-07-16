@@ -1,9 +1,9 @@
 use std::process::Command;
 
 fn main() {
-    // Version from the npm package.json at the repo root (one level up from
-    // this crate, which lives in rust/).
-    let pkg_json = std::fs::read_to_string("../package.json").unwrap_or_default();
+    // Version from the npm package.json at the repo root (two levels up from
+    // this crate, which lives in crates/tor-js-wasm/).
+    let pkg_json = std::fs::read_to_string("../../package.json").unwrap_or_default();
     let version = pkg_json
         .lines()
         .find_map(|line| {
@@ -20,7 +20,7 @@ fn main() {
     let cargo_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
     assert_eq!(
         cargo_version, version,
-        "Version mismatch: Cargo.toml has {cargo_version} but ../package.json has {version}"
+        "Version mismatch: Cargo.toml has {cargo_version} but ../../package.json has {version}"
     );
 
     // Build profile
