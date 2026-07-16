@@ -30,86 +30,94 @@ function defaultStrategies(hasGateway: boolean): string[] {
 // ArtiSocket — uniform bidirectional byte pipe
 // ---------------------------------------------------------------------------
 
+/** How a socket ended: cleanly, or with an error reason. */
+export interface ArtiSocketCloseInfo {
+  ok: boolean;
+  reason?: string;
+}
+
+/** The parts a transport supplies to build an {@link ArtiSocket}. */
+export interface ArtiSocketParts {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+  closed: Promise<ArtiSocketCloseInfo>;
+  closeWrite: () => Promise<void>;
+  close: () => void;
+}
+
 /**
- * A bidirectional byte pipe to a Tor relay.
+ * A bidirectional byte pipe to a Tor relay, shaped like a KPS `Stream`.
  *
- * Assign `onmessage` and `onclose` after creation.
- * Call `send(data)` with Uint8Array and `close()` when done.
+ * Data flows through the WHATWG `readable`/`writable` streams, which carry
+ * backpressure end to end: the consumer (the WASM runtime) pulls from
+ * `readable` on demand, so the transport only pulls from the network when
+ * arti actually reads, and writes await the sink so a slow relay throttles
+ * the writer. There is no intermediate buffering or event queue.
  */
 export class ArtiSocket {
-  #send: (data: Uint8Array) => void;
+  /** Inbound bytes. Pull-based: reading drives the transport's network pull. */
+  readonly readable: ReadableStream<Uint8Array>;
+  /** Outbound bytes. The writer's backpressure reflects the transport buffer. */
+  readonly writable: WritableStream<Uint8Array>;
+  /** Resolves when the socket is fully closed. */
+  readonly closed: Promise<ArtiSocketCloseInfo>;
+
+  #closeWrite: () => Promise<void>;
   #close: () => void;
-  #closed = false;
-  #onclose: (() => void) | null = null;
 
-  /** Set by transport on error, before onclose fires. */
-  _error: string | null = null;
-
-  /** Receive callback — transport fires this with each incoming chunk. */
-  onmessage: ((data: Uint8Array) => void) | null = null;
-
-  constructor(
-    send: (data: Uint8Array) => void,
-    close: () => void,
-  ) {
-    this.#send = send;
-    this.#close = close;
+  constructor(parts: ArtiSocketParts) {
+    this.readable = parts.readable;
+    this.writable = parts.writable;
+    this.closed = parts.closed;
+    this.#closeWrite = parts.closeWrite;
+    this.#close = parts.close;
   }
 
-  /** Setter that fires immediately if close already happened. */
-  set onclose(fn: (() => void) | null) {
-    this.#onclose = fn;
-    if (this.#closed && fn) queueMicrotask(() => fn());
-  }
-  get onclose(): (() => void) | null { return this.#onclose; }
-
-  /** @internal — called by transport wrappers when the underlying connection closes. */
-  _notifyClose(): void {
-    if (this.#closed) return;
-    this.#closed = true;
-    this.#onclose?.();
+  /** Half-close the write side (the peer sees a TCP FIN); reads continue. */
+  closeWrite(): Promise<void> {
+    return this.#closeWrite();
   }
 
-  send(data: Uint8Array): void {
-    this.#send(data);
-  }
-
+  /** Tear down both halves of the socket. */
   close(): void {
     this.#close();
   }
 
   // -- Transport factories --------------------------------------------------
 
-  /** Wrap a Node.js net.Socket (already connected). */
-  static fromNodeSocket(socket: any): ArtiSocket {
-    const sock = new ArtiSocket(
-      (data) => socket.write(data),
-      () => socket.destroy(),
-    );
-    socket.on('data', (buf: Buffer) => sock.onmessage?.(new Uint8Array(buf)));
-    socket.on('close', () => sock._notifyClose());
-    socket.on('error', () => {});
-    return sock;
+  /** Wrap a Node.js net.Socket (already connected) as WHATWG streams. */
+  static async fromNodeSocket(socket: any): Promise<ArtiSocket> {
+    // Duplex.toWeb bridges the socket to WHATWG streams with backpressure in
+    // both directions (it pauses the socket when the reader isn't pulling).
+    const { Duplex } = await import('node:stream');
+    const { readable, writable } = Duplex.toWeb(socket);
+    return new ArtiSocket({
+      readable: readable as ReadableStream<Uint8Array>,
+      writable: writable as WritableStream<Uint8Array>,
+      closed: new Promise<ArtiSocketCloseInfo>((resolve) => {
+        socket.once('close', (hadError: boolean) => resolve({ ok: !hadError }));
+      }),
+      closeWrite: () => new Promise<void>((resolve) => socket.end(resolve)),
+      close: () => socket.destroy(),
+    });
   }
 
-  /** Wrap a Deno TCP connection. */
+  /** Wrap a Deno TCP connection (whose readable/writable are already WHATWG). */
   static fromDenoConn(conn: any): ArtiSocket {
-    const sock = new ArtiSocket(
-      (data) => {
-        const writer = conn.writable.getWriter();
-        writer.write(data).then(() => writer.releaseLock());
+    let onClosed!: () => void;
+    const closed = new Promise<ArtiSocketCloseInfo>((resolve) => {
+      onClosed = () => resolve({ ok: true });
+    });
+    return new ArtiSocket({
+      readable: conn.readable,
+      writable: conn.writable,
+      closed,
+      closeWrite: () => (conn.closeWrite ? conn.closeWrite() : Promise.resolve()),
+      close: () => {
+        try { conn.close(); } catch { /* already closed */ }
+        onClosed();
       },
-      () => conn.close(),
-    );
-    (async () => {
-      try {
-        for await (const chunk of conn.readable) {
-          sock.onmessage?.(new Uint8Array(chunk));
-        }
-      } catch {}
-      sock._notifyClose();
-    })();
-    return sock;
+    });
   }
 }
 

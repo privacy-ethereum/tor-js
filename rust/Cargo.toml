@@ -56,15 +56,17 @@ web-sys = { version = "0.3.69", features = [
     "console",
     "Headers",
     "ReadableStream",
+    "ReadableStreamDefaultReader",
     "Response",
     "ResponseInit",
+    "WritableStream",
+    "WritableStreamDefaultWriter",
 ] }
 wasm-streams = "0.4"
 serde-wasm-bindgen = "0.6"
 
 # Async runtime
 futures = "0.3"
-futures-channel = "0.3"
 gloo-timers = { version = "0.3", features = ["futures"] }
 async-trait = "0.1.54"
 void = "1"

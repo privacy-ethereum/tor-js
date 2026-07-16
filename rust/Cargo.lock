@@ -4128,7 +4128,6 @@ dependencies = [
  "console_error_panic_hook",
  "digest",
  "futures",
- "futures-channel",
  "futures-rustls",
  "getrandom 0.2.17",
  "getrandom 0.3.4",

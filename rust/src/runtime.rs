@@ -35,7 +35,7 @@ use tor_rtcompat::tls::{TlsAcceptorSettings, TlsConnector};
 use std::borrow::Cow;
 use async_trait::async_trait;
 use futures::task::{Spawn, SpawnError};
-use futures::{stream, AsyncRead, AsyncWrite, Future, StreamExt};
+use futures::{stream, AsyncRead, AsyncWrite, Future};
 use wasm_bindgen::JsCast;
 use std::fmt::Debug;
 use std::io::{self, Result as IoResult};
@@ -221,27 +221,32 @@ impl<T: Send + 'static> Future for StubThreadHandle<T> {
 // NetStreamProvider implementation (WebSocket proxy)
 // ============================================================================
 
-/// A stream backed by a JS socket object (WebSocket, WebRTC data channel, etc.).
+/// A stream backed by a JS socket object exposing WHATWG streams.
 ///
-/// Owned JS closures kept alive for the socket's lifetime.
-type JsClosures = send_wrapper::SendWrapper<Vec<wasm_bindgen::closure::Closure<dyn FnMut(wasm_bindgen::JsValue)>>>;
-
-/// When a [`WasmRuntime`] has a connect function configured via
-/// [`WasmRuntime::set_connect_fn`], calls to `connect(addr)` invoke the JS
-/// callback and wrap the returned socket object as this stream.
-///
-/// The JS socket must implement: `send(Uint8Array)`, `onmessage` setter,
-/// `onclose` setter, and `close()`.
-#[allow(dead_code)] // Fields held to keep JS callbacks alive
+/// The JS socket (e.g. `ArtiSocket` from the TS wrapper) must expose a
+/// `readable` (`ReadableStream<Uint8Array>`), a `writable`
+/// (`WritableStream<Uint8Array>`), and a `close()` method. Data is pulled and
+/// pushed one chunk at a time so backpressure propagates end to end: arti only
+/// pulls from the network when it reads, and writes wait for the sink to drain.
 pub struct JsProxyStream {
     /// The underlying JS socket object (e.g. ArtiSocket from the TS wrapper).
     socket: send_wrapper::SendWrapper<wasm_bindgen::JsValue>,
-    /// Channel receiving incoming data chunks from the JS onmessage callback.
-    rx: futures_channel::mpsc::UnboundedReceiver<IoResult<Vec<u8>>>,
-    /// Leftover bytes from a previous read that didn't fit the caller's buffer.
-    buffer: Vec<u8>,
-    /// Prevent the JS closures (onmessage, onclose) from being garbage collected.
-    _closures: JsClosures,
+    /// Reader acquired from `socket.readable`.
+    reader: send_wrapper::SendWrapper<web_sys::ReadableStreamDefaultReader>,
+    /// Writer acquired from `socket.writable`.
+    writer: send_wrapper::SendWrapper<web_sys::WritableStreamDefaultWriter>,
+    /// In-flight `reader.read()` promise, held across polls.
+    pending_read: Option<send_wrapper::SendWrapper<wasm_bindgen_futures::JsFuture>>,
+    /// Leftover bytes from a chunk that didn't fit the caller's buffer.
+    read_buf: Vec<u8>,
+    /// Set once the read side has seen EOF (or errored).
+    read_done: bool,
+    /// In-flight `writer.write()`/`writer.close()` promise, held across polls.
+    pending_write: Option<send_wrapper::SendWrapper<wasm_bindgen_futures::JsFuture>>,
+    /// Set once poll_close has issued `writer.close()`.
+    write_closing: bool,
+    /// Set once the write side is fully closed.
+    write_closed: bool,
 }
 
 impl Debug for JsProxyStream {
@@ -251,53 +256,42 @@ impl Debug for JsProxyStream {
 }
 
 impl JsProxyStream {
-    /// Wrap a JS socket object that has `send`, `onmessage`, `onclose`, `close`.
+    /// Wrap a JS socket that exposes `readable`, `writable`, and `close()`.
     fn wrap(socket: wasm_bindgen::JsValue) -> IoResult<Self> {
-        use wasm_bindgen::prelude::*;
         use wasm_bindgen::JsCast;
 
-        let (tx, rx) = futures_channel::mpsc::unbounded();
+        let readable: web_sys::ReadableStream = js_sys::Reflect::get(&socket, &"readable".into())
+            .map_err(|e| io::Error::other(format!("socket has no readable: {:?}", e)))?
+            .dyn_into()
+            .map_err(|_| io::Error::other("socket.readable is not a ReadableStream"))?;
+        let reader: web_sys::ReadableStreamDefaultReader = readable
+            .get_reader()
+            .unchecked_into();
 
-        // Set onmessage — receives Uint8Array chunks
-        let tx_msg = tx.clone();
-        let on_message = Closure::wrap(Box::new(move |data: wasm_bindgen::JsValue| {
-            if let Ok(arr) = data.dyn_into::<js_sys::Uint8Array>() {
-                let _ = tx_msg.unbounded_send(Ok(arr.to_vec()));
-            }
-        }) as Box<dyn FnMut(wasm_bindgen::JsValue)>);
-        js_sys::Reflect::set(&socket, &"onmessage".into(), on_message.as_ref())
-            .map_err(|e| io::Error::other(format!("failed to set onmessage: {:?}", e)))?;
-
-        // Set onclose — signals EOF on the read channel
-        let tx_close = tx;
-        let on_close = Closure::wrap(Box::new(move |_: wasm_bindgen::JsValue| {
-            tx_close.close_channel();
-        }) as Box<dyn FnMut(wasm_bindgen::JsValue)>);
-        js_sys::Reflect::set(&socket, &"onclose".into(), on_close.as_ref())
-            .map_err(|e| io::Error::other(format!("failed to set onclose: {:?}", e)))?;
+        let writable: web_sys::WritableStream = js_sys::Reflect::get(&socket, &"writable".into())
+            .map_err(|e| io::Error::other(format!("socket has no writable: {:?}", e)))?
+            .dyn_into()
+            .map_err(|_| io::Error::other("socket.writable is not a WritableStream"))?;
+        let writer = writable
+            .get_writer()
+            .map_err(|e| io::Error::other(format!("failed to acquire writer: {:?}", e)))?;
 
         Ok(Self {
             socket: send_wrapper::SendWrapper::new(socket),
-            rx,
-            buffer: Vec::new(),
-            _closures: send_wrapper::SendWrapper::new(vec![on_message, on_close]),
+            reader: send_wrapper::SendWrapper::new(reader),
+            writer: send_wrapper::SendWrapper::new(writer),
+            pending_read: None,
+            read_buf: Vec::new(),
+            read_done: false,
+            pending_write: None,
+            write_closing: false,
+            write_closed: false,
         })
-    }
-
-    /// Call `socket.send(data)`.
-    fn js_send(&self, data: &[u8]) -> IoResult<()> {
-        let send_fn = js_sys::Reflect::get(&self.socket, &"send".into())
-            .map_err(|e| io::Error::other(format!("socket has no send: {:?}", e)))?;
-        let send_fn: js_sys::Function = send_fn.dyn_into()
-            .map_err(|_| io::Error::other("socket.send is not a function"))?;
-        let arr = js_sys::Uint8Array::from(data);
-        send_fn.call1(&self.socket, &arr)
-            .map_err(|e| io::Error::other(format!("socket.send failed: {:?}", e)))?;
-        Ok(())
     }
 
     /// Call `socket.close()`.
     fn js_close(&self) -> IoResult<()> {
+        use wasm_bindgen::JsCast;
         let close_fn = js_sys::Reflect::get(&self.socket, &"close".into())
             .map_err(|e| io::Error::other(format!("socket has no close: {:?}", e)))?;
         let close_fn: js_sys::Function = close_fn.dyn_into()
@@ -310,9 +304,8 @@ impl JsProxyStream {
 
 impl Drop for JsProxyStream {
     fn drop(&mut self) {
-        // Clear callbacks before dropping closures to prevent use-after-free
-        let _ = js_sys::Reflect::set(&self.socket, &"onmessage".into(), &wasm_bindgen::JsValue::NULL);
-        let _ = js_sys::Reflect::set(&self.socket, &"onclose".into(), &wasm_bindgen::JsValue::NULL);
+        // Cancel the reader to unblock any pending read, then close the socket.
+        let _ = self.reader.cancel();
         let _ = self.js_close();
     }
 }
@@ -321,53 +314,159 @@ impl Drop for JsProxyStream {
 
 impl AsyncRead for JsProxyStream {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<IoResult<usize>> {
-        // Drain internal buffer first
-        if !self.buffer.is_empty() {
-            let len = buf.len().min(self.buffer.len());
-            buf[..len].copy_from_slice(&self.buffer[..len]);
-            self.buffer.drain(..len);
+        use wasm_bindgen::JsCast;
+        let this = self.get_mut();
+
+        // Serve leftover bytes from a previous oversized chunk first.
+        if !this.read_buf.is_empty() {
+            let len = buf.len().min(this.read_buf.len());
+            buf[..len].copy_from_slice(&this.read_buf[..len]);
+            this.read_buf.drain(..len);
             return Poll::Ready(Ok(len));
         }
-
-        match self.rx.poll_next_unpin(cx) {
-            Poll::Ready(Some(Ok(data))) => {
-                if data.is_empty() {
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                }
-                let len = buf.len().min(data.len());
-                buf[..len].copy_from_slice(&data[..len]);
-                if len < data.len() {
-                    self.buffer.extend_from_slice(&data[len..]);
-                }
-                Poll::Ready(Ok(len))
-            }
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Err(e)),
-            Poll::Ready(None) => Poll::Ready(Ok(0)), // EOF
-            Poll::Pending => Poll::Pending,
+        if this.read_done {
+            return Poll::Ready(Ok(0)); // EOF
         }
+
+        loop {
+            // Pull exactly one chunk on demand — no chunk is requested from the
+            // network until arti calls poll_read, which is what carries KPS
+            // backpressure back to the sender.
+            if this.pending_read.is_none() {
+                let promise = this.reader.read();
+                this.pending_read =
+                    Some(send_wrapper::SendWrapper::new(wasm_bindgen_futures::JsFuture::from(promise)));
+            }
+
+            let poll = {
+                let fut = this.pending_read.as_mut().unwrap();
+                Pin::new(&mut **fut).poll(cx)
+            };
+            match poll {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(result)) => {
+                    this.pending_read = None;
+                    let done = js_sys::Reflect::get(&result, &"done".into())
+                        .ok()
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if done {
+                        this.read_done = true;
+                        return Poll::Ready(Ok(0)); // server FIN → EOF
+                    }
+                    let value = match js_sys::Reflect::get(&result, &"value".into()) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            return Poll::Ready(Err(io::Error::other(format!(
+                                "read result has no value: {:?}",
+                                e
+                            ))))
+                        }
+                    };
+                    let arr: js_sys::Uint8Array = match value.dyn_into() {
+                        Ok(a) => a,
+                        Err(_) => {
+                            return Poll::Ready(Err(io::Error::other(
+                                "read value is not a Uint8Array",
+                            )))
+                        }
+                    };
+                    let data = arr.to_vec();
+                    if data.is_empty() {
+                        // Empty chunk — request the next one.
+                        continue;
+                    }
+                    let len = buf.len().min(data.len());
+                    buf[..len].copy_from_slice(&data[..len]);
+                    if len < data.len() {
+                        this.read_buf.extend_from_slice(&data[len..]);
+                    }
+                    return Poll::Ready(Ok(len));
+                }
+                Poll::Ready(Err(e)) => {
+                    this.pending_read = None;
+                    this.read_done = true;
+                    return Poll::Ready(Err(io::Error::other(format!("read failed: {:?}", e))));
+                }
+            }
+        }
+    }
+}
+
+impl JsProxyStream {
+    /// Poll the in-flight write/close promise, if any. Returns `Pending` while
+    /// it is outstanding — this is what backpressures the writer against a slow
+    /// sink. Clears it and returns `Ready(Ok)` once it resolves.
+    fn poll_pending_write(&mut self, cx: &mut Context<'_>) -> Poll<IoResult<()>> {
+        if let Some(fut) = self.pending_write.as_mut() {
+            match Pin::new(&mut **fut).poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(_)) => self.pending_write = None,
+                Poll::Ready(Err(e)) => {
+                    self.pending_write = None;
+                    return Poll::Ready(Err(io::Error::other(format!("write failed: {:?}", e))));
+                }
+            }
+        }
+        Poll::Ready(Ok(()))
     }
 }
 
 impl AsyncWrite for JsProxyStream {
     fn poll_write(
         self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<IoResult<usize>> {
-        self.js_send(buf).map(|_| buf.len()).into()
+        let this = self.get_mut();
+        // Wait for the previous write to be accepted before sending more; this
+        // reflects the sink's backpressure back to arti.
+        match this.poll_pending_write(cx) {
+            Poll::Pending => return Poll::Pending,
+            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+            Poll::Ready(Ok(())) => {}
+        }
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        let arr = js_sys::Uint8Array::from(buf);
+        let promise = this.writer.write_with_chunk(arr.as_ref());
+        this.pending_write =
+            Some(send_wrapper::SendWrapper::new(wasm_bindgen_futures::JsFuture::from(promise)));
+        Poll::Ready(Ok(buf.len()))
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<IoResult<()>> {
-        Poll::Ready(Ok(()))
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<IoResult<()>> {
+        self.get_mut().poll_pending_write(cx)
     }
 
-    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<IoResult<()>> {
-        self.js_close().into()
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<IoResult<()>> {
+        let this = self.get_mut();
+        loop {
+            match this.poll_pending_write(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Ready(Ok(())) => {}
+            }
+            if this.write_closed {
+                return Poll::Ready(Ok(()));
+            }
+            if !this.write_closing {
+                // Issue writer.close() (sends the FIN); loop to await it.
+                let promise = this.writer.close();
+                this.pending_write =
+                    Some(send_wrapper::SendWrapper::new(wasm_bindgen_futures::JsFuture::from(promise)));
+                this.write_closing = true;
+                continue;
+            }
+            // write_closing set and no pending promise ⇒ close resolved.
+            this.write_closed = true;
+            return Poll::Ready(Ok(()));
+        }
     }
 }
 

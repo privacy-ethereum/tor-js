@@ -13,7 +13,7 @@
  */
 
 import { parseAddress, type Connection, type Stream } from '@kpstreams/core';
-import { ArtiSocket } from './socketProvider.js';
+import { ArtiSocket, type ArtiSocketCloseInfo } from './socketProvider.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -261,48 +261,52 @@ export class KpsGateway {
       throw new Error(`CONNECT ${target}: ${head.status} ${text.trim() || head.statusText}`);
     }
 
-    const sock = new ArtiSocket(
-      (data) => { writer.write(data).catch(() => {}); },
-      () => {
-        stream.close().catch(() => {});
-        sock._notifyClose();
-      },
-    );
+    // The CONNECT exchange is done; hand the raw tunnel to the consumer as
+    // WHATWG streams. Release the writer we used for the request line so
+    // ArtiSocket.writable is available; keep `reader` (it holds any body
+    // bytes that arrived with the head) and expose it, extra bytes first,
+    // as a pull-based readable that only pulls from the network on demand.
+    writer.releaseLock();
 
-    const removeTeardown = this.#addTeardown(conn, () => {
-      sock._error = sock._error || 'kps connection closed';
-      reader.cancel(new Error('kps connection closed')).catch(() => {});
-      stream.close().catch(() => {});
-      sock._notifyClose();
+    const readable = new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (head.extra.length) controller.enqueue(new Uint8Array(head.extra));
+      },
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) controller.close(); // server FIN — target closed its write half
+          else if (value?.length) controller.enqueue(new Uint8Array(value));
+        } catch (e) {
+          controller.error(e);
+        }
+      },
+      cancel(reason) {
+        reader.cancel(reason).catch(() => {});
+      },
     });
 
-    // Read pump: deliver tunnel bytes until server FIN or stream error.
-    (async () => {
-      // Let the caller attach onmessage before the first delivery.
-      await new Promise((r) => setTimeout(r, 0));
-      try {
-        if (head.extra.length) sock.onmessage?.(new Uint8Array(head.extra));
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break; // server FIN — target closed its write half
-          if (value?.length) sock.onmessage?.(new Uint8Array(value));
-        }
-      } catch (e: any) {
-        sock._error = sock._error || String(e?.message || e);
-      }
-      removeTeardown();
-      sock._notifyClose();
-    })();
+    const closed: Promise<ArtiSocketCloseInfo> = stream.closed.then((info) => ({
+      ok: info.ok,
+      reason: info.ok ? undefined : (info.reason?.code ?? 'error'),
+    }));
 
-    stream.closed.then((info) => {
-      if (!info.ok && info.reason) {
-        sock._error = sock._error || `stream ${info.reason.code || 'error'}`;
-      }
-      removeTeardown();
-      sock._notifyClose();
-    }).catch(() => {});
+    // The JS kps client doesn't reliably settle streams when the connection
+    // dies (kps ISSUES #4), which would hang a pending read forever. Cancel
+    // the reader and close the stream on connection teardown.
+    const removeTeardown = this.#addTeardown(conn, () => {
+      reader.cancel(new Error('kps connection closed')).catch(() => {});
+      stream.close().catch(() => {});
+    });
+    stream.closed.then(removeTeardown, removeTeardown);
 
-    return sock;
+    return new ArtiSocket({
+      readable,
+      writable: stream.writable,
+      closed,
+      closeWrite: () => stream.closeWrite(),
+      close: () => { stream.close().catch(() => {}); },
+    });
   }
 
   /** Close the underlying KPS connection (all streams/tunnels with it). */
