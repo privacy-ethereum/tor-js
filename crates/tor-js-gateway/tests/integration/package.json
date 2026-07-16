@@ -1,0 +1,12 @@
+{
+  "name": "tor-js-gateway-integration-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-force-exit --test-timeout=120000 *.test.mjs"
+  },
+  "devDependencies": {
+    "@kpstreams/quic-client": "^0.1.0",
+    "@noble/hashes": "^1.5.0"
+  }
+}

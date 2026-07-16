@@ -1,0 +1,17 @@
+{
+  "name": "tor-js-gateway-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild torJsGateway.js --bundle --format=esm --sourcemap --external:https://* --outfile=dist/torJsGateway.js",
+    "serve": "npm run build && node serve.mjs"
+  },
+  "dependencies": {
+    "@kpstreams/core": "^0.1.0",
+    "@kpstreams/webrtc-client": "^0.1.0",
+    "fzstd": "^0.1.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

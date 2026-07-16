@@ -1,0 +1,57 @@
+[package]
+name = "tor-js-gateway"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.91"
+
+[dependencies]
+# Arti crates (crates.io)
+arti-client = { version = "0.44.0", features = ["tokio", "native-tls", "experimental-api"] }
+tor-checkable = "0.44.0"
+tor-circmgr = "0.44.0"
+tor-netdir = "0.44.0"
+tor-netdoc = "0.44.0"
+tor-rtcompat = { version = "0.44.0", features = ["tokio", "native-tls"] }
+tor-consdiff = "0.44.0"
+tor-dircommon = "0.44.0"
+tor-llcrypto = "0.44.0"
+
+# KPS transport (QUIC + WebRTC on one UDP port)
+kps = { git = "https://github.com/privacy-ethereum/kps", rev = "0db55b985b708ab5e864a6af5d7d1a887a5e61b5" }
+
+# HTTP over KPS streams (PROTOCOL.md: KPS-HTTP/1)
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }
+bytes = "1"
+
+# External
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+json5 = "1"
+dirs = "6"
+rand = "0.9"
+humantime = "2"
+futures = "0.3"
+async-compression = { version = "0.4", features = ["futures-io", "zlib", "xz", "zstd"] }
+base64ct = { version = "1", features = ["alloc"] }
+sha3 = "0.10"
+digest = "0.10"
+hex = "0.4"
+zip = { version = "2", default-features = false }
+zstd = "0.13"
+
+# webrtc-sctp carries a KPS fix (drain the reassembly queue before honoring
+# read_shutdown) pending upstream: without it, a peer that writes and promptly
+# closes a data channel loses data at a webrtc-rs receiver ~10% of the time.
+# Cargo [patch] sections do not propagate from dependencies, so this mirrors
+# the pin in the kps repo's libs/rust/Cargo.toml — keep the two in sync.
+# Upstream: https://github.com/webrtc-rs/webrtc/issues/816
+[patch.crates-io]
+webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "2d730447917bbf775cda0ad967ea3e737de46ef7" }
