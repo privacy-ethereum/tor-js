@@ -88,11 +88,13 @@ function concat(chunks, length) {
  * - { type: "tunnel-open", target }
  *
  * @example
- * const gw = new Gateway('198.51.100.7:42298:uEiAxk...9Qw');
+ * const gw = new Gateway('198.51.100.7:12298:uEiAxk...9Qw');
  * const meta = await gw.metadata();
- * const sock = await gw.connect('198.51.100.1:9001');
- * sock.send(new Uint8Array([0x16, 0x03, 0x01]));
- * sock.onmessage = (data) => { /* Uint8Array *\/ };
+ * const sock = await gw.connect('198.51.100.1:9001'); // a KPS stream
+ * const writer = sock.writable.getWriter();
+ * await writer.write(new Uint8Array([0x16, 0x03, 0x01]));
+ * const reader = sock.readable.getReader();
+ * const { value } = await reader.read(); // Uint8Array from the relay
  * gw.close();
  */
 export class Gateway {
@@ -198,11 +200,18 @@ export class Gateway {
   }
 
   /**
-   * Open a TCP tunnel to a Tor relay via CONNECT (PROTOCOL.md §4). After
-   * the gateway's 200 the stream is the raw byte pipe to the target.
+   * Open a TCP tunnel to a Tor relay via CONNECT (PROTOCOL.md §4). After the
+   * gateway's 200 the KPS stream is the raw byte pipe to the target.
+   *
+   * Returns the KPS stream itself — `{ readable, writable, closed, closeWrite,
+   * close }` — with no socket wrapper, so backpressure is preserved end to end:
+   * read from `readable` at your own pace and the gateway only pulls from the
+   * relay as you consume. The one bit of wrapping is a pull-based readable that
+   * replays the handful of body bytes that can arrive in the same KPS chunk as
+   * the response head; when none did, `stream.readable` is returned directly.
    *
    * @param {string} target - Relay address as "ip:port" (consensus relays only).
-   * @returns {Promise<RelaySocket>}
+   * @returns {Promise<{readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array>, closed: Promise<{ok: boolean, reason?: object}>, closeWrite: () => Promise<void>, close: () => Promise<void>}>}
    */
   async connect(target) {
     const conn = await this.#connection();
@@ -228,7 +237,35 @@ export class Gateway {
     }
 
     this.#onEvent?.({ type: 'tunnel-open', target });
-    return RelaySocket.fromKpsStream(stream, reader, writer, head.extra);
+
+    // Release the request-line writer so stream.writable is usable again.
+    writer.releaseLock();
+
+    let readable;
+    if (head.extra.length) {
+      // Body bytes arrived with the head; replay them first, then pull the
+      // rest from the stream on demand (backpressure preserved).
+      readable = new ReadableStream({
+        start(c) { c.enqueue(head.extra); },
+        async pull(c) {
+          const { done, value } = await reader.read();
+          if (done) c.close();
+          else if (value?.length) c.enqueue(value);
+        },
+        cancel(reason) { reader.cancel(reason).catch(() => {}); },
+      });
+    } else {
+      reader.releaseLock();
+      readable = stream.readable;
+    }
+
+    return {
+      readable,
+      writable: stream.writable,
+      closed: stream.closed,
+      closeWrite: () => stream.closeWrite(),
+      close: () => stream.close(),
+    };
   }
 
   /** Close the underlying KPS connection (all streams/tunnels with it). */
@@ -239,91 +276,6 @@ export class Gateway {
       const conn = await p.catch(() => null);
       await conn?.close();
     }
-  }
-}
-
-// --- RelaySocket ---
-
-/**
- * A relay tunnel socket. Assign `onmessage` and `onclose` handlers after
- * creation; call `send(data)` with Uint8Array and `close()` when done.
- * `closeWrite()` half-closes (the relay sees TCP FIN) while reads continue.
- */
-export class RelaySocket {
-  #stream;
-  #writer;
-  #closed = false;
-  #onclose = null;
-  onmessage = null;
-  /** Set to a reason string when the tunnel ended abnormally. */
-  _error = null;
-  /** Transport marker (kept for API compatibility). */
-  strategy = 'kps';
-
-  /** Setter that fires immediately if close already happened. */
-  set onclose(fn) {
-    this.#onclose = fn;
-    if (this.#closed && fn) queueMicrotask(() => fn());
-  }
-  get onclose() {
-    return this.#onclose;
-  }
-
-  /** @internal */
-  _notifyClose() {
-    if (this.#closed) return;
-    this.#closed = true;
-    this.#onclose?.();
-  }
-
-  send(data) {
-    this.#writer.write(data).catch(() => {});
-  }
-
-  /** Gracefully finish the write half (target observes TCP FIN). */
-  closeWrite() {
-    this.#writer.close().catch(() => {});
-  }
-
-  close() {
-    this.#stream.close().catch(() => {});
-    this._notifyClose();
-  }
-
-  get readyState() {
-    return this.#closed ? 'closed' : 'open';
-  }
-
-  /** @internal Wrap a KPS stream that has completed the CONNECT exchange. */
-  static fromKpsStream(stream, reader, writer, extra) {
-    const sock = new RelaySocket();
-    sock.#stream = stream;
-    sock.#writer = writer;
-
-    (async () => {
-      // Let the caller attach onmessage before the first delivery.
-      await new Promise((r) => setTimeout(r, 0));
-      try {
-        if (extra?.length) sock.onmessage?.(new Uint8Array(extra));
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break; // server FIN — target closed its write half
-          if (value?.length) sock.onmessage?.(new Uint8Array(value));
-        }
-      } catch (e) {
-        sock._error = sock._error || String(e?.message || e);
-      }
-      sock._notifyClose();
-    })();
-
-    stream.closed.then((info) => {
-      if (!info.ok && info.reason) {
-        sock._error = sock._error || `stream ${info.reason.code || 'error'}`;
-      }
-      sock._notifyClose();
-    });
-
-    return sock;
   }
 }
 

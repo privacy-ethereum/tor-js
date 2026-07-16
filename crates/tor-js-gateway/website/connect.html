@@ -745,22 +745,37 @@ async function doConnect(target) {
     ctrl.setStatus('open', 'Connected');
     ctrl.addLog('*', 'Tunnel open');
 
-    sock.onmessage = (data) => {
-      ctrl.onRecv(data.length);
-      ctrl.addLog('<', hexDump(data, 256), true);
-    };
+    const writer = sock.writable.getWriter();
 
-    sock.onclose = () => {
-      const reason = sock._error ? `Rejected: ${sock._error}` : 'Closed';
+    function markClosed(reason, isError) {
       ctrl.setStatus('closed', reason);
-      ctrl.addLog(sock._error ? '!' : '*', reason);
+      ctrl.addLog(isError ? '!' : '*', reason);
       ctrl.sendBtn.disabled = true;
       ctrl.tlsBtn.disabled = true;
-    };
+    }
 
-    function sendBytes(bytes) {
+    // Pull inbound bytes from the KPS stream. Reading at our own pace is what
+    // preserves backpressure — the gateway only pulls from the relay as we go.
+    (async () => {
+      const reader = sock.readable.getReader();
       try {
-        sock.send(bytes);
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break; // relay closed its write half
+          if (value?.length) {
+            ctrl.onRecv(value.length);
+            ctrl.addLog('<', hexDump(value, 256), true);
+          }
+        }
+        markClosed('Closed', false);
+      } catch (e) {
+        markClosed(`Error: ${e?.message || e}`, true);
+      }
+    })();
+
+    async function sendBytes(bytes) {
+      try {
+        await writer.write(bytes); // awaits the sink → real write backpressure
         ctrl.onSent(bytes.length);
         ctrl.addLog('>', hexDump(bytes, 256), true);
       } catch (e) {

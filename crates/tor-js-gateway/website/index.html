@@ -553,9 +553,12 @@ h1 span { color: var(--accent); }
 <span class="cm">// Open a relay tunnel (one KPS stream per tunnel)</span>
 <span class="kw">const</span> sock = <span class="kw">await</span> gw.<span class="fn">connect</span>(<span class="str">'198.51.100.1:9001'</span>);
 
-sock.<span class="fn">send</span>(<span class="kw">new</span> Uint8Array([<span class="nr">0x16</span>, <span class="nr">0x03</span>, <span class="nr">0x01</span>, ...]));
-sock.<span class="fn">onmessage</span> = (data) =&gt; { <span class="cm">/* Uint8Array from relay */</span> };
-sock.<span class="fn">onclose</span> = () =&gt; { <span class="cm">/* closed */</span> };
+<span class="cm">// It's the KPS stream itself — read/write WHATWG streams (backpressured)</span>
+<span class="kw">const</span> writer = sock.writable.<span class="fn">getWriter</span>();
+<span class="kw">await</span> writer.<span class="fn">write</span>(<span class="kw">new</span> Uint8Array([<span class="nr">0x16</span>, <span class="nr">0x03</span>, <span class="nr">0x01</span>, ...]));
+
+<span class="kw">const</span> reader = sock.readable.<span class="fn">getReader</span>();
+<span class="kw">const</span> { value } = <span class="kw">await</span> reader.<span class="fn">read</span>(); <span class="cm">// Uint8Array from relay</span>
 
 <span class="cm">// More tunnels reuse the same KPS connection</span>
 <span class="kw">const</span> sock2 = <span class="kw">await</span> gw.<span class="fn">connect</span>(<span class="str">'203.0.113.5:443'</span>);
