@@ -24,11 +24,12 @@ npm install tor-js
 import { TorClient } from 'tor-js';
 
 const client = new TorClient({
-  // gateway: 'https://tor-js-gateway.HOSTME.com',
+  // gateway: '198.51.100.7:12298:uEiAxk...9Qw',
 
-  // (In NodeJS you can leave this commented, but browsers
-  // don't have raw TCP and so require help to connect to
-  // the tor network.
+  // (A gateway's KPS address, "ip:port:certhash" — printed by
+  // tor-js-gateway at startup. In NodeJS you can leave this
+  // commented, but browsers don't have raw TCP and so require
+  // help to connect to the tor network.
   // https://github.com/privacy-ethereum/tor-js-gateway)
 });
 
@@ -44,9 +45,9 @@ The package offers three ways to load the WASM binary. All export the same API.
 
 | Import | WASM loading | Size (gzip) | Best for |
 |---|---|---|---|
-| `tor-js` | Fetched from CDN, cached locally | 17 kB | Production web apps |
+| `tor-js` | Fetched from CDN, cached locally | 24 kB | Production web apps |
 | `tor-js/wasm-base64` | Embedded in the JS bundle | 2.3 MB | Single-file deploys |
-| `tor-js/wasm-file` | Loaded from `tor_js_bg.wasm` next to the module | 15 kB + 1.7 MB | Self-hosted, server-side |
+| `tor-js/wasm-file` | Loaded from `tor_js_bg.wasm` next to the module | 23 kB + 1.8 MB | Self-hosted, server-side |
 
 Each also has a `/singleton` variant (see [Singleton](#singleton) below).
 
@@ -58,14 +59,14 @@ Creates a Tor client and begins bootstrapping immediately.
 
 ```typescript
 type TorClientOptions = {
-  gateway?: string;       // Gateway URL (required in browsers, optional in Node.js/Deno)
+  gateway?: string;       // Gateway KPS address "ip:port:certhash" (required in browsers, optional in Node.js/Deno)
   log?: Log;              // Logger instance (default: silent)
   storage?: TorStorage;   // Persistent storage (default: auto-detected)
   logLevel?: LogLevel;    // 'trace' | 'debug' | 'info' | 'warn' | 'error'
 };
 ```
 
-In browsers, the gateway proxies relay connections via WebRTC or WebSocket. In Node.js/Deno, connections go via direct TCP and the gateway is only used for fast bootstrap (optional).
+The gateway is dialed over [KPS](https://github.com/privacy-ethereum/kps) (WebRTC in browsers; QUIC in Node.js via the optional `@kpstreams/quic-client` package) and tunnels relay connections with HTTP `CONNECT`. In Node.js/Deno, connections go via direct TCP and the gateway is only used for fast bootstrap (optional).
 
 ### `client.fetch(url, init?)`
 
@@ -115,11 +116,11 @@ For simple use cases, import the singleton wrapper:
 import { tor } from 'tor-js/singleton';
 
 // tor.configure({
-//   gateway: 'https://tor-js-gateway.HOSTME.com',
+//   gateway: '198.51.100.7:12298:uEiAxk...9Qw',
 //
-//   (In NodeJS you can leave this commented, but browsers
-//   don't have raw TCP and so require help to connect to
-//   the tor network.
+//   (A gateway's KPS address, "ip:port:certhash". In NodeJS
+//   you can leave this commented, but browsers don't have
+//   raw TCP and so require help to connect to the tor network.
 //   https://github.com/privacy-ethereum/tor-js-gateway)
 // });
 

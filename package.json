@@ -64,8 +64,18 @@
     "url": "https://github.com/privacy-ethereum/tor-js/issues"
   },
   "devDependencies": {
+    "@kpstreams/core": "^0.1.0",
+    "@kpstreams/webrtc-client": "^0.1.0",
     "@types/node": "^25.3.0",
     "tsup": "^8.3.5",
     "typescript": "~5.7.3"
+  },
+  "peerDependencies": {
+    "@kpstreams/quic-client": "^0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@kpstreams/quic-client": {
+      "optional": true
+    }
   }
 }

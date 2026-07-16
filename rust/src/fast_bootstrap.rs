@@ -1,6 +1,10 @@
 //! Fast bootstrap: pre-populate directory cache from a bootstrap.zip archive.
 //!
-//! Parses a bootstrap.zip (from a tor-fast-bootstrap server) containing:
+//! The callback may return the archive either as raw zip bytes or
+//! zstd-compressed (`bootstrap.zip.zst`, as served by tor-js-gateway);
+//! compression is detected by the zstd magic and decompressed with ruzstd.
+//!
+//! Parses a bootstrap.zip (from a tor-js-gateway server) containing:
 //! - `bootstrap/consensus-microdesc.txt`
 //! - `bootstrap/authority-certs.txt`
 //! - `bootstrap/microdescs.txt`
@@ -22,6 +26,31 @@ use tor_netdoc::doc::authcert::AuthCert;
 use tor_netdoc::doc::netstatus::MdConsensus;
 use tracing::{info, warn};
 use wasm_bindgen::JsCast;
+
+/// Zstd frame magic number (little-endian 0xFD2FB528).
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+
+/// Decompress the archive if it is zstd-compressed (tor-js-gateway serves
+/// `/bootstrap.zip.zst` as raw zstd bytes over KPS — there is no transparent
+/// content-encoding on KPS streams). Raw zip bytes pass through unchanged.
+fn maybe_decompress_zstd(bytes: Vec<u8>) -> Result<Vec<u8>, wasm_bindgen::JsValue> {
+    if bytes.len() < 4 || bytes[..4] != ZSTD_MAGIC {
+        return Ok(bytes);
+    }
+    let cursor = std::io::Cursor::new(bytes);
+    let mut decoder = ruzstd::decoding::StreamingDecoder::new(cursor).map_err(|e| {
+        wasm_bindgen::JsValue::from_str(&format!("fast bootstrap: zstd decode error: {}", e))
+    })?;
+    let mut decompressed = Vec::new();
+    std::io::Read::read_to_end(&mut decoder, &mut decompressed).map_err(|e| {
+        wasm_bindgen::JsValue::from_str(&format!("fast bootstrap: zstd decompress error: {}", e))
+    })?;
+    info!(
+        "Fast bootstrap: decompressed zstd archive to {} bytes",
+        decompressed.len()
+    );
+    Ok(decompressed)
+}
 
 /// Check if storage is empty and, if so, populate from the fast bootstrap callback.
 pub async fn maybe_fast_bootstrap(
@@ -48,7 +77,7 @@ pub async fn maybe_fast_bootstrap(
         })?;
     let promise = js_sys::Promise::from(promise);
     let result = wasm_bindgen_futures::JsFuture::from(promise).await?;
-    let zip_bytes = js_sys::Uint8Array::from(result).to_vec();
+    let zip_bytes = maybe_decompress_zstd(js_sys::Uint8Array::from(result).to_vec())?;
 
     info!(
         "Fast bootstrap: received {} bytes, parsing...",

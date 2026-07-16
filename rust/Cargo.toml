@@ -30,6 +30,9 @@ tor-async-utils = { git = "https://github.com/voltrevo/arti", rev = "2be5b51e895
 tor-general-addr = { git = "https://github.com/voltrevo/arti", rev = "2be5b51e895a687d1e7fc3ce1c01896730bcb9d3" }
 web-time-compat = { git = "https://github.com/voltrevo/arti", rev = "2be5b51e895a687d1e7fc3ce1c01896730bcb9d3" }
 digest = "0.10"
+# Decompresses zstd fast-bootstrap archives (bootstrap.zip.zst). Already in
+# the dep graph via tor-dirmgr's zstd-wasm feature, so ~zero size cost.
+ruzstd = "0.8"
 
 # TLS for HTTPS over DataStream (rustls with pure-Rust crypto for WASM)
 futures-rustls = { version = "0.26", default-features = false, features = ["tls12", "logging"] }

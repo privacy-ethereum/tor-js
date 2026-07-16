@@ -1,14 +1,16 @@
 /**
- * Socket provider for connecting to Tor relays via direct TCP, WebSocket,
- * or WebRTC.
+ * Socket provider for connecting to Tor relays via direct TCP or a
+ * tor-js-gateway reached over KPS (WebRTC in browsers, QUIC in Node).
  *
  * ArtiSocketProvider auto-detects available strategies based on environment:
- * - Node.js/Deno: tries direct TCP first, then WebSocket/WebRTC if a gateway URL is set
- * - Browsers: tries WebRTC first (if available), then WebSocket (requires gateway URL)
+ * - Node.js/Deno: tries direct TCP first, then the KPS gateway if one is set
+ * - Browsers: KPS gateway only (browsers can't open TCP sockets)
  *
  * Each `connect(target)` call returns an {@link ArtiSocket} — a uniform
  * bidirectional byte pipe regardless of transport.
  */
+
+import { KpsGateway } from './kpsGateway.js';
 
 // ---------------------------------------------------------------------------
 // Environment detection
@@ -16,15 +18,11 @@
 
 const HAS_DENO = typeof (globalThis as any).Deno !== 'undefined';
 const HAS_NODE = typeof (globalThis as any).process?.versions?.node !== 'undefined';
-const HAS_RTC = typeof (globalThis as any).RTCPeerConnection !== 'undefined';
-const HAS_WS =
-  typeof (globalThis as any).WebSocket !== 'undefined' || HAS_DENO || HAS_NODE;
 
-function defaultStrategies(hasUrl: boolean): string[] {
+function defaultStrategies(hasGateway: boolean): string[] {
   const s: string[] = [];
   if (HAS_DENO || HAS_NODE) s.push('direct');
-  if (hasUrl && HAS_RTC) s.push('webrtc');
-  if (hasUrl && HAS_WS) s.push('websocket');
+  if (hasGateway) s.push('kps');
   return s;
 }
 
@@ -82,28 +80,6 @@ export class ArtiSocket {
 
   // -- Transport factories --------------------------------------------------
 
-  /** Wrap a browser WebSocket (already open). */
-  static fromWebSocket(ws: WebSocket): ArtiSocket {
-    const sock = new ArtiSocket(
-      (data) => ws.send(data),
-      () => ws.close(),
-    );
-    ws.onmessage = (ev) => sock.onmessage?.(new Uint8Array(ev.data));
-    ws.onclose = () => sock._notifyClose();
-    return sock;
-  }
-
-  /** Wrap a WebRTC data channel (already open). */
-  static fromDataChannel(dc: RTCDataChannel): ArtiSocket {
-    const sock = new ArtiSocket(
-      (data) => dc.send(data),
-      () => dc.close(),
-    );
-    dc.onmessage = (ev) => sock.onmessage?.(new Uint8Array(ev.data));
-    dc.onclose = () => sock._notifyClose();
-    return sock;
-  }
-
   /** Wrap a Node.js net.Socket (already connected). */
   static fromNodeSocket(socket: any): ArtiSocket {
     const sock = new ArtiSocket(
@@ -146,48 +122,49 @@ export class ArtiSocket {
  */
 export interface ArtiSocketProviderOptions {
   /**
-   * Gateway URL (e.g., `"https://tor-js-gateway.example.com"`).
-   * Required in browsers for WebRTC/WebSocket relay connections.
-   * Optional in Node.js/Deno (enables fast bootstrap when provided).
+   * Gateway KPS address (`ip:port:certhash`, e.g.
+   * `"198.51.100.7:12298:uEiAxk...9Qw"`).
+   * Required in browsers for relay connections.
+   * Optional in Node.js/Deno (enables fast bootstrap and gateway fallback
+   * when provided; requires the optional `@kpstreams/quic-client` package).
    */
   gateway?: string;
 
   /**
-   * Ordered list of strategies to try: `"direct"`, `"webrtc"`, `"websocket"`.
-   * Defaults based on environment and whether a gateway URL is provided.
+   * Ordered list of strategies to try: `"direct"`, `"kps"`.
+   * Defaults based on environment and whether a gateway address is provided.
    */
   strategies?: string[];
 }
 
-interface TrackedEntry {
-  dc: RTCDataChannel;
-  sock: ArtiSocket | null;
-  reject: ((err: Error) => void) | null;
-}
-
 /**
  * Opens sockets to Tor relays via configurable strategies (direct TCP,
- * WebRTC data channels, WebSocket) with automatic fallback.
+ * KPS gateway tunnels) with automatic fallback.
  *
- * The gateway URL is optional — without it, only the `direct` strategy is
- * available (Node.js/Deno native TCP). With a gateway URL, WebRTC and
- * WebSocket strategies become available for browser environments.
+ * The gateway address is optional — without it, only the `direct` strategy
+ * is available (Node.js/Deno native TCP). With a gateway address, the `kps`
+ * strategy becomes available (the only option in browsers).
  */
 export class ArtiSocketProvider {
-  #url: string | null;
+  #gateway: KpsGateway | null = null;
   #strategies: string[];
 
-  // WebRTC state (lazily created, reused across connect() calls)
-  #rtcPc: RTCPeerConnection | null = null;
-  #rtcAlive = false;
-  #rtcSetup: Promise<void> | null = null;
-  #signalChannel: RTCDataChannel | null = null;
-  // Tracked data channels: before open has reject, after open has sock.
-  #tracked: TrackedEntry[] = [];
-
   constructor(options: ArtiSocketProviderOptions = {}) {
-    this.#url = options.gateway ? options.gateway.replace(/\/+$/, '') : null;
-    this.#strategies = options.strategies ?? defaultStrategies(!!this.#url);
+    if (options.gateway) {
+      if (/^(https?|wss?):\/\//.test(options.gateway)) {
+        throw new Error(
+          `gateway is now a KPS address ("ip:port:certhash"), not a URL — got "${options.gateway}". ` +
+          'Gateways expose their address at startup and in /metadata.json.',
+        );
+      }
+      this.#gateway = new KpsGateway(options.gateway);
+    }
+    this.#strategies = options.strategies ?? defaultStrategies(!!this.#gateway);
+  }
+
+  /** The KPS gateway client, when a gateway address was configured. */
+  get gateway(): KpsGateway | null {
+    return this.#gateway;
   }
 
   /**
@@ -202,10 +179,8 @@ export class ArtiSocketProvider {
         switch (strategy) {
           case 'direct':
             return await this.#connectDirect(target);
-          case 'webrtc':
-            return await this.#connectWebRTC(target);
-          case 'websocket':
-            return await this.#connectWebSocket(target);
+          case 'kps':
+            return await this.#connectKps(target);
           default:
             throw new Error(`unknown strategy: ${strategy}`);
         }
@@ -217,14 +192,9 @@ export class ArtiSocketProvider {
     throw new Error(`all strategies failed for ${target}: ${errors.join('; ')}`);
   }
 
-  /** Close WebRTC peer connection and release resources. */
+  /** Close the KPS gateway connection and release resources. */
   close(): void {
-    if (this.#rtcPc) {
-      this.#rtcPc.close();
-      this.#rtcPc = null;
-      this.#rtcAlive = false;
-      this.#signalChannel = null;
-    }
+    this.#gateway?.close();
   }
 
   // -- Direct TCP strategy (Node.js / Deno) ---------------------------------
@@ -251,170 +221,10 @@ export class ArtiSocketProvider {
     throw new Error('direct TCP not available in this environment');
   }
 
-  // -- WebSocket strategy ---------------------------------------------------
+  // -- KPS gateway strategy -------------------------------------------------
 
-  async #connectWebSocket(target: string): Promise<ArtiSocket> {
-    if (!this.#url) throw new Error('websocket strategy requires a gateway URL');
-    const wsUrl = `${this.#url.replace(/^http/, 'ws')}/socket/${target}`;
-    const ws = new WebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer';
-
-    await new Promise<void>((resolve, reject) => {
-      ws.onopen = () => resolve();
-      ws.onerror = () => reject(new Error('websocket connection failed'));
-    });
-
-    return ArtiSocket.fromWebSocket(ws);
-  }
-
-  // -- WebRTC strategy ------------------------------------------------------
-
-  async #connectWebRTC(target: string): Promise<ArtiSocket> {
-    if (!this.#url) throw new Error('webrtc strategy requires a gateway URL');
-    if (typeof RTCPeerConnection === 'undefined') {
-      throw new Error('RTCPeerConnection not available');
-    }
-
-    // Create or reuse peer connection. Concurrent connect() calls must share
-    // one PC. A channel's SCTP id is unique only within its own PC, but
-    // #findTracked resolves incoming _signal messages by id against a single
-    // global #tracked list. A second PC would reuse the same ids, so a signal
-    // for a channel on one PC could resolve to a channel on the other. Keeping
-    // to one PC makes that id lookup unambiguous.
-    if (!this.#rtcAlive) {
-      if (!this.#rtcSetup) {
-        if (this.#rtcPc) this.#rtcPc.close();
-        this.#rtcSetup = this.#setupRtcPeerConnection().finally(() => {
-          this.#rtcSetup = null;
-        });
-      }
-      await this.#rtcSetup;
-    }
-
-    if (!this.#rtcPc) {
-      // #rtcPc must exist because #rtcAlive or #rtcSetup completed successfully
-      throw new Error('internal error: rtc peer connection not established');
-    }
-    const dc = this.#rtcPc.createDataChannel(target);
-    dc.binaryType = 'arraybuffer';
-
-    const entry = { dc, sock: null as ArtiSocket | null, reject: null as ((err: Error) => void) | null };
-    this.#tracked.push(entry);
-
-    // Race: channel opens vs server rejects via _signal
-    await new Promise<void>((resolve, reject) => {
-      entry.reject = reject;
-      dc.onopen = () => resolve();
-      dc.onerror = (e: any) => {
-        this.#removeTracked(entry);
-        reject(new Error(`data channel error: ${e.error?.message || e}`));
-      };
-    });
-
-    // Channel is open — dc.id now available
-    entry.reject = null;
-    const sock = ArtiSocket.fromDataChannel(dc);
-    entry.sock = sock;
-    dc.onclose = () => {
-      this.#removeTracked(entry);
-      sock._notifyClose();
-    };
-    return sock;
-  }
-
-  async #setupRtcPeerConnection(): Promise<void> {
-    const pc = new RTCPeerConnection();
-
-    // Signal channel for control messages (hello, ping/pong, rejections)
-    const signal = pc.createDataChannel('_signal');
-    signal.onmessage = (ev) => this.#handleSignalMessage(ev.data);
-
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    // Wait for ICE gathering to complete
-    await new Promise<void>((resolve) => {
-      if (pc.iceGatheringState === 'complete') return resolve();
-      pc.addEventListener('icegatheringstatechange', () => {
-        if (pc.iceGatheringState === 'complete') resolve();
-      });
-    });
-
-    const res = await fetch(`${this.#url}/rtc/connect`, {
-      method: 'POST',
-      body: JSON.stringify(pc.localDescription),
-    });
-
-    if (!res.ok) {
-      pc.close();
-      throw new Error(`rtc signaling failed: ${res.status} ${await res.text()}`);
-    }
-
-    const answer = await res.json();
-    await pc.setRemoteDescription(answer);
-
-    // Wait for connection
-    await new Promise<void>((resolve, reject) => {
-      if (pc.connectionState === 'connected') return resolve();
-      pc.addEventListener('connectionstatechange', () => {
-        if (pc.connectionState === 'connected') resolve();
-        if (pc.connectionState === 'failed') reject(new Error('WebRTC connection failed'));
-      });
-    });
-
-    this.#rtcPc = pc;
-    this.#rtcAlive = true;
-    this.#signalChannel = signal;
-
-    pc.addEventListener('connectionstatechange', () => {
-      const s = pc.connectionState;
-      if (s === 'disconnected' || s === 'closed' || s === 'failed') {
-        this.#rtcAlive = false;
-        this.#signalChannel = null;
-      }
-    });
-  }
-
-  #findTracked(sctpId: number | null, label: string) {
-    return this.#tracked.find(e => e.dc.id != null && e.dc.id === sctpId)
-      ?? this.#tracked.find(e => e.dc.label === label);
-  }
-
-  #removeTracked(entry: TrackedEntry): void {
-    const i = this.#tracked.indexOf(entry);
-    if (i !== -1) this.#tracked.splice(i, 1);
-  }
-
-  #handleSignalMessage(data: string): void {
-    try {
-      const msg = JSON.parse(data);
-      switch (msg.type) {
-        case 'rejected': {
-          const entry = this.#findTracked(msg.sctp_id, msg.channel);
-          if (entry) {
-            this.#removeTracked(entry);
-            if (entry.reject) {
-              entry.reject(new Error(`rejected: ${msg.reason}`));
-            } else if (entry.sock) {
-              entry.sock._error = msg.reason;
-              entry.sock.close();
-              entry.sock._notifyClose();
-            }
-          }
-          break;
-        }
-        case 'closed': {
-          const entry = this.#findTracked(msg.sctp_id, msg.channel);
-          if (entry) {
-            this.#removeTracked(entry);
-            if (entry.sock) {
-              entry.sock.close();
-              entry.sock._notifyClose();
-            }
-          }
-          break;
-        }
-      }
-    } catch { /* ignore malformed signal messages */ }
+  async #connectKps(target: string): Promise<ArtiSocket> {
+    if (!this.#gateway) throw new Error('kps strategy requires a gateway address');
+    return this.#gateway.connect(target);
   }
 }

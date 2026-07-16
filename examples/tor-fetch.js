@@ -3,8 +3,11 @@
 // Make an HTTP request through Tor with persistent filesystem storage
 //
 // Build:   npm run build
-// Usage:   examples/tor-fetch.js [--websocket <gateway-url>] [--in-memory] [url]
-// Example: examples/tor-fetch.js --websocket https://tor-js-gateway.HOSTME.com https://check.torproject.org/api/ip
+// Usage:   examples/tor-fetch.js [--gateway <kps-address>] [--in-memory] [url]
+// Example: examples/tor-fetch.js --gateway 198.51.100.7:12298:uEiAxk...9Qw https://check.torproject.org/api/ip
+//
+// Connecting via a gateway from Node requires the optional QUIC transport:
+//   npm install @kpstreams/quic-client
 //
 // State is persisted to ~/.local/share/tor-js/
 // Subsequent runs will load cached state for faster bootstrap.
@@ -13,13 +16,13 @@ import { TorClient, Log, ArtiSocketProvider, storage } from '../dist/entryPoints
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  let websocketGateway;
+  let gateway;
   let inMemory = false;
   let url = 'https://check.torproject.org/api/ip';
 
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--websocket' && i + 1 < args.length) {
-      websocketGateway = args[++i];
+    if (args[i] === '--gateway' && i + 1 < args.length) {
+      gateway = args[++i];
     } else if (args[i] === '--in-memory') {
       inMemory = true;
     } else {
@@ -27,11 +30,11 @@ function parseArgs(argv) {
     }
   }
 
-  return { websocketGateway, inMemory, url };
+  return { gateway, inMemory, url };
 }
 
 async function main() {
-  const { websocketGateway, inMemory, url } = parseArgs(process.argv);
+  const { gateway, inMemory, url } = parseArgs(process.argv);
 
   const log = new Log();
 
@@ -44,11 +47,11 @@ async function main() {
   if (inMemory) {
     options.storage = new storage.MemoryStorage();
   }
-  if (websocketGateway) {
-    options.gateway = websocketGateway;
+  if (gateway) {
+    options.gateway = gateway;
     options.socketProvider = new ArtiSocketProvider({
-      gateway: websocketGateway,
-      strategies: ['websocket'],
+      gateway,
+      strategies: ['kps'],
     });
   }
 

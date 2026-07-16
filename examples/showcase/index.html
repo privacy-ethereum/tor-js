@@ -538,8 +538,8 @@
                 </div>
 
                 <div class="input-group">
-                    <label for="gatewayUrl">Gateway URL</label>
-                    <input type="url" id="gatewayUrl" name="gatewayUrl" value="https://tor-js-gateway.pse.dev" placeholder="https://tor-js-gateway.pse.dev">
+                    <label for="gatewayUrl">Gateway address (ip:port:certhash)</label>
+                    <input type="text" id="gatewayUrl" name="gatewayUrl" value="170.64.236.147:12298:uEiBHwUMNRTetrbqScahm81Di57Xv2OphNrx-CurJGOq3ww" placeholder="ip:port:certhash">
                 </div>
 
                 <div class="btn-group" style="margin-top: 12px;">
@@ -625,7 +625,7 @@
         const LOG_DB_NAME = 'tor-js-logs';
         const LOG_STORE_NAME = 'logs';
         const SESSION_ID = Date.now();     // unique identifier for this page load
-        const DEFAULT_GATEWAY = 'https://tor-js-gateway.pse.dev';
+        const DEFAULT_GATEWAY = '170.64.236.147:12298:uEiBHwUMNRTetrbqScahm81Di57Xv2OphNrx-CurJGOq3ww';
 
         // ── URL validation ─────────────────────────────────────────────────────
         function validateUrl(url) {
@@ -1130,7 +1130,7 @@
             connectBtn.addEventListener('click', async () => {
                 const gateway = gatewayUrlInput.value.trim();
                 if (!gateway) {
-                    log.error('Gateway URL is required');
+                    log.error('Gateway address is required');
                     return;
                 }
 

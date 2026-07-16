@@ -265,8 +265,9 @@ impl TorClientOptions {
 
     /// Set a callback that provides bootstrap.zip bytes for fast directory pre-population.
     ///
-    /// The callback should be `() => Promise<Uint8Array>` returning the uncompressed
-    /// bootstrap.zip bytes (from a tor-js-gateway server).
+    /// The callback should be `() => Promise<Uint8Array>` returning the
+    /// bootstrap archive from a tor-js-gateway server — either raw zip bytes
+    /// or zstd-compressed (`bootstrap.zip.zst`); compression is auto-detected.
     ///
     /// When set and storage has no cached consensus, the zip is parsed and the
     /// directory cache is pre-populated before bootstrap begins.

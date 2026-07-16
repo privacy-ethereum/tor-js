@@ -21,6 +21,10 @@ export default defineConfig({
   splitting: false,
   target: 'es2022',
   external: ['node:fs/promises', 'node:os', 'node:path', 'node:url', 'node:crypto'],
+  // Bundle the KPS browser client (small, zero-dep ESM) so the dist works
+  // without a bundler or import map. The optional Node QUIC transport is
+  // imported via a non-literal specifier and stays external.
+  noExternal: ['@kpstreams/core', '@kpstreams/webrtc-client'],
   esbuildPlugins: [{
     name: 'resolve-for-bundling',
     setup(build) {

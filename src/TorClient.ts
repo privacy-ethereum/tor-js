@@ -29,7 +29,8 @@ export class TorClient {
   constructor(options: TorClientOptions = {}) {
     if (isBrowser() && !options.gateway && !options.socketProvider) {
       throw new Error(
-        'TorClient: in the browser, you must configure a gateway because browsers can\'t open regular TCP sockets.',
+        'TorClient: in the browser, you must configure a gateway (KPS address "ip:port:certhash") ' +
+        'because browsers can\'t open regular TCP sockets.',
       );
     }
     this.log = (options.log ?? new Log({ rawLog: () => {} }));
@@ -44,8 +45,9 @@ export class TorClient {
     this.wasmCallback = this.log._makeWasmCallback();
     this.removeLogListener = addLogListener(this.wasmCallback, options.logLevel);
 
-    // ArtiSocketProvider handles relay connections. In browsers it needs a gateway
-    // URL for WebRTC/WebSocket proxying; in Node.js/Deno it connects via direct TCP.
+    // ArtiSocketProvider handles relay connections. In browsers it needs a
+    // gateway KPS address ("ip:port:certhash") for tunneling; in Node.js/Deno
+    // it connects via direct TCP.
     this.socketProvider = options.socketProvider ?? new ArtiSocketProvider({ gateway: options.gateway });
     const sp = this.socketProvider;
 
@@ -56,18 +58,18 @@ export class TorClient {
     const storage = options.storage ?? createAutoStorage();
     wasmOptions = wasmOptions.withStorage(storage);
 
-    // Auto-attempt fast bootstrap from gateway — only when a URL is available
-    if (options.gateway) {
-      const gatewayBase = options.gateway.replace(/\/+$/, '');
+    // Auto-attempt fast bootstrap from gateway — only when one is configured.
+    // The archive is zstd-compressed; the WASM side decompresses it.
+    const gw = sp.gateway;
+    if (gw) {
       wasmOptions = wasmOptions.withFastBootstrap(async (): Promise<Uint8Array> => {
-        this.log.info('Fast bootstrap: fetching bootstrap.zip.br...');
-        const res = await fetch(`${gatewayBase}/bootstrap.zip.br`);
-        if (!res.ok) {
+        this.log.info('Fast bootstrap: fetching bootstrap.zip.zst...');
+        const res = await gw.fetch('/bootstrap.zip.zst');
+        if (res.status !== 200) {
           throw new Error(`Fast bootstrap fetch failed: ${res.status} ${res.statusText}`);
         }
-        const bytes = new Uint8Array(await res.arrayBuffer());
-        this.log.info(`Fast bootstrap: received ${bytes.byteLength} bytes`);
-        return bytes;
+        this.log.info(`Fast bootstrap: received ${res.body.byteLength} bytes (compressed)`);
+        return res.body;
       });
     }
 

@@ -5,3 +5,4 @@ export { Log, type LogLevel } from './Log.js';
 export * as storage from './storage/index.js';
 export { setWasmUrl } from './wasm.js';
 export { ArtiSocketProvider, ArtiSocket, type ArtiSocketProviderOptions } from './socketProvider.js';
+export { KpsGateway, type GatewayResponse } from './kpsGateway.js';

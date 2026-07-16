@@ -4139,6 +4139,7 @@ dependencies = [
  "js-sys",
  "rustls-pki-types",
  "rustls-rustcrypto",
+ "ruzstd",
  "send_wrapper",
  "serde",
  "serde-wasm-bindgen",
