@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main, kps]
+  pull_request:
+  workflow_dispatch:
+
+# Minimal by default; the Pages deploy job elevates its own permissions.
+permissions:
+  contents: read
+
+jobs:
+  # Native gateway crate: build, Rust tests, and the KPS transport tests
+  # (QUIC via @kpstreams/quic-client, WebRTC via @kpstreams/webrtc-client).
+  gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # `cargo build`/`test` operate on default-members (the gateway); the
+      # binary lands in the workspace target/, where the JS harnesses look.
+      - name: Build gateway
+        run: cargo build --locked
+      - name: Rust unit tests
+        run: cargo test --locked
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Integration tests (KPS/QUIC)
+        working-directory: crates/tor-js-gateway/tests/integration
+        run: |
+          npm ci
+          npm test
+
+      - name: Browser smoke test (KPS/WebRTC)
+        working-directory: crates/tor-js-gateway/tests/browser
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm test
+
+  # WASM client crate + TypeScript wrapper, and assembly of the showcase site.
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+      - name: Build WASM + TS wrapper
+        run: npm run build
+
+      - name: Assemble showcase site
+        run: |
+          mkdir -p _site
+          cp examples/showcase/index.html _site/
+          cp examples/showcase/tor.svg _site/
+          cp -a dist _site/dist
+      - uses: actions/upload-pages-artifact@v3
+
+  # Deploy the showcase to GitHub Pages — main only.
+  deploy-showcase:
+    needs: client
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

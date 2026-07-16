@@ -11,10 +11,13 @@ import { zstdCompressSync } from 'node:zlib'
 import { keccak_256 } from '@noble/hashes/sha3'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const repoRoot = resolve(here, '../..')
+// The Cargo workspace root is four levels up (tests/integration →
+// crates/tor-js-gateway → crates → repo root); the built binary lands in the
+// workspace-wide target/ there, not under the crate.
+const workspaceRoot = resolve(here, '../../../..')
 
 export const GATEWAY_BIN =
-  process.env.GATEWAY_BIN ?? join(repoRoot, 'target/debug/tor-js-gateway')
+  process.env.GATEWAY_BIN ?? join(workspaceRoot, 'target/debug/tor-js-gateway')
 
 const hex = b => Buffer.from(b).toString('hex')
 

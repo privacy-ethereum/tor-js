@@ -11,8 +11,11 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '../..')
+// The built binary lands in the Cargo workspace-wide target/ (repo root, four
+// levels up), not under the crate; the website stays beside the crate.
+const workspaceRoot = resolve(here, '../../../..')
 const gatewayBin =
-  process.env.GATEWAY_BIN ?? join(repoRoot, 'target/debug/tor-js-gateway')
+  process.env.GATEWAY_BIN ?? join(workspaceRoot, 'target/debug/tor-js-gateway')
 const websiteDir = join(repoRoot, 'website')
 const stateFilePath = join(here, '.run-state.json')
 

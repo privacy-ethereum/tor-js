@@ -207,12 +207,3 @@ All files are written atomically via `.tmp` intermediates.
 ## Website
 
 The demo/inspector website that previous versions served over HTTP lives in [`website/`](website/) as a separate subproject with its own hosting story — the gateway binary no longer serves any pages.
-
-## Docker
-
-```
-docker build --network=host -t tor-js-gateway .
-docker run --network=host tor-js-gateway
-```
-
-`--network=host` is needed at build time for fetching crates, and at run time for reaching Tor directory authorities. Use `-p 12298:12298/udp` instead if your Docker bridge has working outbound connectivity — the KPS port is UDP; both QUIC and WebRTC ride it. Note that WebRTC over IPv6 requires the socket to be bound to the wildcard address the clients actually reach (the default `:12298` dual-stack bind handles this).
