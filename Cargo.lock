@@ -7568,8 +7568,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sctp"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f985465467d8910c1f8ac4382cd64f83b1f6a1a75021a82b221546f6fb3b856f"
+source = "git+https://github.com/privacy-ethereum/kps.git?rev=2d730447917bbf775cda0ad967ea3e737de46ef7#2d730447917bbf775cda0ad967ea3e737de46ef7"
 dependencies = [
  "arc-swap",
  "async-trait",
