@@ -155,8 +155,8 @@ export function renderResponse(container, resp) {
     viewControls.append(segmented([{ label: 'Pretty', value: 'pretty' }, { label: 'Raw', value: 'raw' }], 'pretty', renderJson));
     renderJson('pretty');
   } else if (isHtml) {
-    viewControls.append(segmented([{ label: 'Source', value: 'source' }, { label: 'Preview', value: 'preview' }], 'source', renderHtml));
-    renderHtml('source');
+    viewControls.append(segmented([{ label: 'Preview', value: 'preview' }, { label: 'Source', value: 'source' }], 'preview', renderHtml));
+    renderHtml('preview');
   } else if (decodable) {
     renderText();
   } else {
