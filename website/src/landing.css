@@ -15,13 +15,13 @@
   font-weight: 800;
   margin: 0 0 20px;
 }
-/* Circuit animation as its own strip below the text, not behind it. */
+/* Circuit animation between the title and the subtitle. */
 .hero-viz {
   position: relative;
   width: 100%;
   max-width: 1000px;
-  height: 240px;
-  margin: 40px auto 0;
+  height: 104px;
+  margin: 8px auto 12px;
 }
 .hero-viz::before {
   content: '';

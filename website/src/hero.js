@@ -16,7 +16,7 @@ const NODES = [
 const LAYERS = ['#ff79c6', '#57d9e0', '#9d7bff'];
 const SEGMENTS = NODES.length - 1; // 4 hops
 const HOP_MS = 1150; // travel time per hop
-const PAUSE_MS = 380; // "processing" pause at each relay
+const PAUSE_MS = 140; // "processing" pause at each relay
 const CYCLE = SEGMENTS * (HOP_MS + PAUSE_MS) + 700;
 
 export function initHero(canvas) {
@@ -75,9 +75,9 @@ export function initHero(canvas) {
       const a = pos(i), b = pos(i + 1);
       ctx.beginPath();
       ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.16)';
       ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 6]);
+      ctx.setLineDash([3, 5]);
       ctx.stroke();
       ctx.setLineDash([]);
       // brighten the traversed portion
@@ -149,15 +149,19 @@ export function initHero(canvas) {
     }
   }
 
+  const BURST_MS = 700;
   function drawBursts(now) {
-    bursts = bursts.filter((b) => now - b.t < 620);
+    bursts = bursts.filter((b) => now - b.t < BURST_MS);
     for (const b of bursts) {
-      const k = (now - b.t) / 620;
+      const k = (now - b.t) / BURST_MS;
+      const eased = 1 - Math.pow(1 - k, 2);
+      // Start at the peeled ring's own radius and grow outward as it fades,
+      // so it reads as that layer lifting off the packet.
       ctx.beginPath();
-      ctx.arc(b.x, b.y, 8 + k * 34, 0, Math.PI * 2);
+      ctx.arc(b.x, b.y, b.r0 + eased * 22, 0, Math.PI * 2);
       ctx.strokeStyle = b.color;
-      ctx.globalAlpha = (1 - k) * 0.7;
-      ctx.lineWidth = 2;
+      ctx.globalAlpha = (1 - k) * 0.45;
+      ctx.lineWidth = 2 * (1 - k) + 0.6;
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
@@ -177,10 +181,12 @@ export function initHero(canvas) {
       acc += PAUSE_MS;
     }
 
-    // peel burst when we land on a relay (segment boundary reached)
+    // peel burst when we land on a relay: the outermost remaining ring lifts
+    // off at its own radius/color, then expands and fades (see drawBursts).
     if (seg !== lastSeg && seg > 0) {
       const p = pos(seg);
-      bursts.push({ x: p.x, y: p.y, t: now, color: LAYERS[seg - 1] });
+      const li = LAYERS.length - seg; // index of the outermost (peeled) layer
+      bursts.push({ x: p.x, y: p.y, t: now, color: LAYERS[li], r0: 8 + li * 5.5 });
       lastSeg = seg;
     }
     if (elapsed < 60) lastSeg = -1; // reset each cycle
