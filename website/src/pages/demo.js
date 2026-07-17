@@ -12,6 +12,7 @@ const $ = (id) => document.getElementById(id);
 const dot = $('dot'), statusEl = $('status');
 const gatewayInput = $('gateway'), connectBtn = $('connect'), disconnectBtn = $('disconnect');
 const stepRequest = $('step-request');
+const stepResponse = $('step-response');
 const presetSel = $('preset'), customField = $('custom-field'), customUrl = $('custom-url');
 const fetchBtn = $('fetch'), responseEl = $('response');
 const logEl = $('log'), logDrawer = $('log-drawer'), logToggle = $('log-toggle');
@@ -90,6 +91,7 @@ connectBtn.addEventListener('click', async () => {
     log('info', `Ready in ${secs}s`);
     disconnectBtn.disabled = false;
     stepRequest.classList.remove('locked');
+    stepResponse.classList.remove('locked');
   } catch (e) {
     setStatus('err', 'Connection failed');
     log('error', e?.message || String(e));
@@ -107,6 +109,7 @@ disconnectBtn.addEventListener('click', () => {
   gatewayInput.disabled = false;
   disconnectBtn.disabled = true;
   stepRequest.classList.add('locked');
+  stepResponse.classList.add('locked');
 });
 
 fetchBtn.addEventListener('click', async () => {

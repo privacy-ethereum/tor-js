@@ -98,17 +98,21 @@ tlsBtn.addEventListener('click', () => send(buildTlsClientHello()));
 closeBtn.addEventListener('click', () => { sock?.close(); });
 $('clear-log').addEventListener('click', () => { logEl.innerHTML = ''; });
 
-randomBtn.addEventListener('click', async () => {
+async function pickRandom(silent) {
   randomBtn.disabled = true;
   try {
     targetInput.value = await gateway().randomRelay();
-    log('*', `Picked relay ${targetInput.value}`, 'log-i');
+    if (!silent) log('*', `Picked relay ${targetInput.value}`, 'log-i');
   } catch (e) {
-    log('!', e?.message || String(e), 'log-err');
+    if (!silent) log('!', e?.message || String(e), 'log-err');
   } finally {
     randomBtn.disabled = false;
   }
-});
+}
+randomBtn.addEventListener('click', () => pickRandom(false));
+
+// Prefill the target with a random consensus relay on load (best-effort).
+pickRandom(true);
 
 // --- helpers (lifted from the old gateway website) ------------------------
 

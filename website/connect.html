@@ -15,7 +15,7 @@
   <div class="tools-page">
     <div class="page-head">
       <h1>Relay tester</h1>
-      <p>Open a raw <code>CONNECT</code> tunnel to a consensus relay over the gateway's KPS connection, then push bytes down it. The tunnel is the KPS stream itself — reads pull at your pace (backpressure preserved), writes await the sink.</p>
+      <p>Open a raw <code>CONNECT</code> tunnel to a tor node using the gateway.</p>
     </div>
 
     <div class="grid-2" style="margin-top: 26px;">
@@ -26,7 +26,7 @@
         </div>
         <div class="field">
           <label for="target">Relay target <span class="mut">(ip:port)</span></label>
-          <input type="text" id="target" class="mono" placeholder="185.220.101.4:9001" spellcheck="false" />
+          <input type="text" id="target" class="mono" placeholder="ip:port" spellcheck="false" />
         </div>
         <div class="btn-row">
           <button class="btn" id="connect">Open tunnel</button>
