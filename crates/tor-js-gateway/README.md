@@ -206,4 +206,4 @@ All files are written atomically via `.tmp` intermediates.
 
 ## Website
 
-The demo/inspector website that previous versions served over HTTP lives in [`website/`](website/) as a separate subproject with its own hosting story — the gateway binary no longer serves any pages.
+The demo/inspector site (landing, live demo, relay tester, bootstrap inspector) lives at the repo root in [`website/`](../../website/) and is deployed separately — the gateway binary no longer serves any pages.

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Relay tester — tor-js</title>
+  <meta name="description" content="Open a raw CONNECT tunnel to a Tor consensus relay through a gateway and send bytes by hand." />
+  <link rel="icon" href="/onion.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="tools-page">
+    <div class="page-head">
+      <h1>Relay tester</h1>
+      <p>Open a raw <code>CONNECT</code> tunnel to a consensus relay over the gateway's KPS connection, then push bytes down it. The tunnel is the KPS stream itself — reads pull at your pace (backpressure preserved), writes await the sink.</p>
+    </div>
+
+    <div class="grid-2" style="margin-top: 26px;">
+      <div class="card">
+        <div class="field">
+          <label for="gateway">Gateway address <span class="mut">(ip:port:certhash)</span></label>
+          <input type="text" id="gateway" class="mono" spellcheck="false" />
+        </div>
+        <div class="field">
+          <label for="target">Relay target <span class="mut">(ip:port)</span></label>
+          <input type="text" id="target" class="mono" placeholder="185.220.101.4:9001" spellcheck="false" />
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="connect">Open tunnel</button>
+          <button class="btn secondary" id="random">Random relay</button>
+        </div>
+        <p class="notice" id="gw-notice">
+          Defaults to a public demo gateway.
+          <a href="https://github.com/privacy-ethereum/tor-js/tree/main/crates/tor-js-gateway" target="_blank" rel="noopener">Run your own →</a>
+        </p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Send</div>
+        <div class="field">
+          <label for="send">Hex bytes</label>
+          <input type="text" id="send" class="mono" placeholder="16 03 01 …" spellcheck="false" disabled />
+        </div>
+        <div class="btn-row">
+          <button class="btn sm" id="send-btn" disabled>Send hex</button>
+          <button class="btn secondary sm" id="tls-btn" disabled>Send TLS ClientHello</button>
+          <button class="btn ghost sm" id="close-btn" disabled>Close tunnel</button>
+        </div>
+        <div class="stat-row">
+          <span><b id="sent">0</b> sent</span>
+          <span><b id="recv">0</b> received</span>
+          <span id="cstat">idle</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 18px;">
+      <div class="card-title">Tunnel log<button class="btn ghost sm" id="clear-log" style="margin-left:auto;">Clear</button></div>
+      <div id="log" class="console" style="height: 340px;"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/pages/connect.js"></script>
+</body>
+</html>

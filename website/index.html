@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>tor-js — Tor in the browser</title>
+  <meta name="description" content="Make HTTP requests through Tor from JavaScript. Real Tor circuits built client-side in WebAssembly, in the browser and Node.js." />
+  <link rel="icon" href="/onion.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <section class="hero">
+    <canvas id="hero-canvas"></canvas>
+    <div class="hero-content">
+      <span class="badge"><span class="dot loading"></span> Experimental</span>
+      <h1>Tor, right in the<br /><span class="gradient-text">browser</span>.</h1>
+      <p class="lead">
+        Make HTTP requests through Tor from JavaScript. Real Tor circuits, built
+        client-side in WebAssembly — every byte of crypto runs on your device.
+      </p>
+      <div class="cta-row">
+        <a class="btn" href="demo.html">Try the live demo →</a>
+        <button class="btn secondary" data-copy="npm install tor-js" aria-label="Copy install command">
+          <span class="install-pill">
+            <span class="dollar">$</span>
+            <span class="copy-label">npm install tor-js</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <main>
+    <!-- How it works -->
+    <section class="section wrap">
+      <div class="section-head">
+        <div class="eyebrow">How it works</div>
+        <h2>Your browser builds the circuit</h2>
+        <p>tor-js runs the Tor client itself — the network only ever carries opaque, layered-encrypted bytes.</p>
+      </div>
+      <div class="steps">
+        <div class="card step">
+          <div class="step-num">1</div>
+          <h3>Bootstrap</h3>
+          <p>The WASM client pulls a compressed directory snapshot and verifies the consensus — no multi-round-trip directory dance.</p>
+        </div>
+        <div class="card step">
+          <div class="step-num">2</div>
+          <h3>Build circuits</h3>
+          <p>It negotiates keys and builds onion-encrypted circuits through guard, middle, and exit relays, entirely on your device.</p>
+        </div>
+        <div class="card step">
+          <div class="step-num">3</div>
+          <h3>fetch() through Tor</h3>
+          <p>Call <code>client.fetch(url)</code> and get a standard <code>Response</code> back — TLS to the destination runs end-to-end inside the circuit.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick start -->
+    <section class="section wrap">
+      <div class="section-head">
+        <div class="eyebrow">Quick start</div>
+        <h2>Three lines to a Tor request</h2>
+      </div>
+      <div class="code-wrap">
+        <div class="code-block">
+          <div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="name">example.js</span></div>
+<pre><span class="k">import</span> { TorClient } <span class="k">from</span> <span class="s">'tor-js'</span>;
+
+<span class="k">const</span> client = <span class="k">new</span> <span class="f">TorClient</span>();
+<span class="k">const</span> res = <span class="k">await</span> client.<span class="f">fetch</span>(<span class="s">'https://check.torproject.org/api/ip'</span>);
+console.<span class="f">log</span>(<span class="k">await</span> res.<span class="f">json</span>()); <span class="c">// { IsTor: true, IP: "..." }</span></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="section wrap">
+      <div class="features">
+        <div class="card feature"><div class="ic">🧅</div><h3>Real onion routing</h3><p>Full Arti (the Tor Project's Rust client) compiled to WebAssembly — not a proxy or an approximation.</p></div>
+        <div class="card feature"><div class="ic">🔒</div><h3>Crypto stays local</h3><p>All circuit and TLS crypto runs in your process. The gateway relays encrypted bytes and learns nothing.</p></div>
+        <div class="card feature"><div class="ic">⚡</div><h3>Fast bootstrap</h3><p>A single zstd-compressed directory snapshot, decompressed client-side. Seconds, not round trips.</p></div>
+        <div class="card feature"><div class="ic">🌐</div><h3>Browser & Node</h3><p>The same API in both. Node opens TCP directly; browsers connect through a gateway.</p></div>
+        <div class="card feature"><div class="ic">📦</div><h3>Tiny surface</h3><p>A ~24&nbsp;kB wrapper plus the WASM. <code>new TorClient()</code>, <code>fetch()</code>, <code>close()</code>.</p></div>
+        <div class="card feature"><div class="ic">🗄️</div><h3>Persistent state</h3><p>Consensus and microdescriptors cache to IndexedDB or disk, so reconnects bootstrap faster.</p></div>
+      </div>
+    </section>
+
+    <!-- Architecture -->
+    <section class="section wrap">
+      <div class="section-head">
+        <div class="eyebrow">Architecture</div>
+        <h2>The gateway is a dumb pipe</h2>
+        <p>Browsers can't open raw TCP, so a small gateway relays bytes to Tor relays over <a href="https://github.com/privacy-ethereum/kps" target="_blank" rel="noopener">KPS</a> (WebRTC/QUIC). It never sees your traffic or destination.</p>
+      </div>
+      <div class="card arch">
+        <div class="arch-node"><div class="t">Your browser</div><p class="d">Builds circuits, holds all keys, does all crypto</p></div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node"><div class="t">Gateway</div><p class="d">Forwards opaque encrypted bytes — CONNECT tunnels over KPS</p></div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node"><div class="t">Tor network</div><p class="d">Guard → middle → exit → the open internet</p></div>
+      </div>
+      <p class="arch-note">Run your own gateway from the <a href="https://github.com/privacy-ethereum/tor-js/tree/main/crates/tor-js-gateway" target="_blank" rel="noopener">tor-js-gateway</a> crate — a single binary, one UDP port.</p>
+    </section>
+
+    <!-- Tools -->
+    <section class="section wrap">
+      <div class="section-head">
+        <div class="eyebrow">Explore</div>
+        <h2>Try it live</h2>
+      </div>
+      <div class="tools">
+        <a class="card tool-card" href="demo.html"><h3>Fetch through Tor <span class="arrow">→</span></h3><p>Make a real HTTP request through a live Tor circuit and watch it bootstrap.</p></a>
+        <a class="card tool-card" href="connect.html"><h3>Relay tester <span class="arrow">→</span></h3><p>Open a raw CONNECT tunnel to any consensus relay and send bytes by hand.</p></a>
+        <a class="card tool-card" href="bootstrap.html"><h3>Bootstrap inspector <span class="arrow">→</span></h3><p>Download, decompress, and parse a gateway's directory snapshot in-browser.</p></a>
+      </div>
+    </section>
+
+    <section class="cta-final wrap">
+      <h2>Bring Tor to your app</h2>
+      <div class="cta-row">
+        <a class="btn" href="demo.html">Live demo →</a>
+        <a class="btn secondary" href="https://github.com/privacy-ethereum/tor-js" target="_blank" rel="noopener">Read the docs</a>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/src/pages/index.js"></script>
+</body>
+</html>

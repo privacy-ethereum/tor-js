@@ -51,7 +51,7 @@
     "build": "bash scripts/build.sh --release",
     "build:ts": "node build.mjs",
     "clean": "rm -rf dist crates/tor-js-wasm/pkg target",
-    "showcase": "bash examples/showcase/run.sh"
+    "website": "npm --prefix website run dev"
   },
   "author": "Andrew Morris",
   "license": "MIT OR Apache-2.0",

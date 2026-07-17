@@ -1,8 +1,9 @@
 // Spawns the gateway and a static page server, mirroring the kps repo's
 // interop pattern (tests/interop there). The page imports the *published*
 // @kpstreams packages from this package's node_modules via an import map.
+// This test is self-contained (page/index.html) and independent of the
+// top-level website, which has its own build and hosting.
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -10,34 +11,12 @@ import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const repoRoot = resolve(here, '../..')
 // The built binary lands in the Cargo workspace-wide target/ (repo root, four
-// levels up), not under the crate; the website stays beside the crate.
+// levels up), not under the crate.
 const workspaceRoot = resolve(here, '../../../..')
 const gatewayBin =
   process.env.GATEWAY_BIN ?? join(workspaceRoot, 'target/debug/tor-js-gateway')
-const websiteDir = join(repoRoot, 'website')
 const stateFilePath = join(here, '.run-state.json')
-
-function run(cmd, args, opts) {
-  return new Promise((res, rej) => {
-    const p = spawn(cmd, args, { stdio: 'inherit', ...opts })
-    p.on('exit', code =>
-      code === 0 ? res() : rej(new Error(`${cmd} ${args.join(' ')} exited ${code}`))
-    )
-    p.on('error', rej)
-  })
-}
-
-// The website spec drives the real site; build its bundle first.
-async function buildWebsite() {
-  if (!existsSync(join(websiteDir, 'node_modules'))) {
-    console.log('[setup] npm install (website)...')
-    await run('npm', ['install', '--no-audit', '--no-fund'], { cwd: websiteDir })
-  }
-  console.log('[setup] npm run build (website)...')
-  await run('npm', ['run', 'build'], { cwd: websiteDir })
-}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -50,7 +29,6 @@ const MIME = {
 const STATIC_ROUTES = [
   ['/kps/core/', join(here, 'node_modules/@kpstreams/core/dist')],
   ['/kps/webrtc-client/', join(here, 'node_modules/@kpstreams/webrtc-client/dist')],
-  ['/website/', websiteDir],
 ]
 
 function startStaticServer() {
@@ -124,7 +102,6 @@ async function startGateway(stateDir) {
 }
 
 export default async function globalSetup() {
-  await buildWebsite()
   const stateDir = await mkdtemp(join(tmpdir(), 'tjg-browser-'))
   const gateway = await startGateway(stateDir)
   const httpServer = await startStaticServer()

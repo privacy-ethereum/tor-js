@@ -7,6 +7,5 @@ dist/
 target/
 crates/tor-js-wasm/pkg/
 
-# GitHub Pages showcase assembly (examples/showcase/run.sh, CI _site)
+# GitHub Pages assembly (CI)
 _site/
-examples/showcase/dist/

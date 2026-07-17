@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bootstrap inspector — tor-js</title>
+  <meta name="description" content="Download, decompress, and parse a gateway's Tor directory snapshot entirely in the browser." />
+  <link rel="icon" href="/onion.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="tools-page">
+    <div class="page-head">
+      <h1>Bootstrap inspector</h1>
+      <p>Fetch a gateway's fast-bootstrap archive over KPS, decompress the zstd stream in-browser, and parse the consensus, authority certificates, and microdescriptors — the same snapshot tor-js uses to skip the multi-round-trip directory protocol.</p>
+    </div>
+
+    <div class="card" style="margin-top: 26px;">
+      <div class="field">
+        <label for="gateway">Gateway address <span class="mut">(ip:port:certhash)</span></label>
+        <input type="text" id="gateway" class="mono" spellcheck="false" />
+      </div>
+      <div class="btn-row">
+        <button class="btn" id="fetch">Fetch &amp; inspect</button>
+        <button class="btn secondary" id="download" disabled>Download archive</button>
+      </div>
+    </div>
+
+    <div class="card" id="progress-card" style="margin-top: 18px;" hidden>
+      <div class="card-title">Progress</div>
+      <label>Download (compressed)</label>
+      <div class="progress"><span id="bar-dl"></span></div>
+      <div class="stat-row"><span id="dl-txt">—</span></div>
+      <label style="margin-top:14px;">Decompress (zstd → zip)</label>
+      <div class="progress"><span id="bar-dec"></span></div>
+      <div class="stat-row"><span id="dec-txt">—</span></div>
+    </div>
+
+    <div id="tiles" class="tiles" style="margin-top: 18px;" hidden></div>
+
+    <div class="card" id="consensus-card" style="margin-top: 18px;" hidden>
+      <div class="card-title">Consensus header</div>
+      <div id="consensus" class="console" style="max-height: 260px;"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/pages/bootstrap.js"></script>
+</body>
+</html>

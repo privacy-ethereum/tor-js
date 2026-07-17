@@ -1,0 +1,54 @@
+/* Shared styles for the tool pages (demo / connect / bootstrap). */
+
+.mut { color: var(--text-muted); font-weight: 400; }
+
+.status-row { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; color: var(--text-dim); }
+.card-title { display: flex; align-items: center; font-weight: 700; font-size: 0.95rem; margin-bottom: 14px; }
+
+.notice {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  background: rgba(157, 123, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  margin: 12px 0 0;
+}
+
+.btn-row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+.rule { border: none; border-top: 1px solid var(--border); margin: 22px 0; }
+.stack { display: flex; flex-direction: column; gap: 18px; }
+
+.response {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 420px;
+  overflow: auto;
+}
+.response.empty { color: var(--text-muted); font-family: var(--sans); }
+.response .rstatus { display: inline-block; padding: 2px 9px; border-radius: 999px; font-weight: 600; margin-bottom: 10px; }
+.response .rstatus.ok { background: rgba(110, 231, 168, 0.14); color: var(--ok); }
+.response .rstatus.bad { background: rgba(255, 107, 125, 0.14); color: var(--err); }
+.response .rhdr { color: var(--text-muted); }
+.response .rbody { color: var(--text-dim); margin-top: 10px; }
+
+/* Relay tester (connect) */
+.conn-panel { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 14px; }
+.conn-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--bg-2); border-bottom: 1px solid var(--border); }
+.conn-head .target { font-family: var(--mono); font-weight: 600; }
+.conn-head .cstat { margin-left: auto; font-size: 0.82rem; color: var(--text-muted); }
+.conn-body { padding: 12px 14px; }
+.hex { display: flex; gap: 8px; margin-top: 10px; }
+.stat-row { display: flex; gap: 18px; font-size: 0.82rem; color: var(--text-muted); margin-top: 8px; }
+.stat-row b { color: var(--text-dim); font-weight: 600; }
+
+/* Stat tiles (bootstrap) */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+.tile { text-align: center; padding: 20px 14px; }
+.tile .n { font-size: 1.9rem; font-weight: 800; letter-spacing: -0.02em; }
+.tile .l { font-size: 0.8rem; color: var(--text-muted); margin-top: 2px; }
+.progress { height: 8px; background: var(--bg-3); border-radius: 999px; overflow: hidden; margin: 6px 0; }
+.progress > span { display: block; height: 100%; background: var(--grad-brand); width: 0; transition: width 0.15s linear; }

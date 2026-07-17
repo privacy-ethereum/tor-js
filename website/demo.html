@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live demo — tor-js</title>
+  <meta name="description" content="Make a real HTTP request through a live Tor circuit, built in your browser with tor-js." />
+  <link rel="icon" href="/onion.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="tools-page">
+    <div class="page-head">
+      <h1>Fetch through Tor</h1>
+      <p>Bootstrap a real Tor client in your browser and make an HTTP request over a live circuit. All crypto runs on your device; the gateway only relays encrypted bytes.</p>
+    </div>
+
+    <div class="grid-2" style="margin-top: 26px;">
+      <!-- Controls -->
+      <div class="card">
+        <div class="status-row">
+          <span class="dot" id="dot"></span>
+          <span id="status">Not connected</span>
+        </div>
+
+        <div class="field" style="margin-top:16px;">
+          <label for="gateway">Gateway address <span class="mut">(ip:port:certhash)</span></label>
+          <input type="text" id="gateway" class="mono" spellcheck="false" />
+        </div>
+        <p class="notice" id="gw-notice">
+          This defaults to a public demo gateway — limited capacity, may disappear.
+          <a href="https://github.com/privacy-ethereum/tor-js/tree/main/crates/tor-js-gateway" target="_blank" rel="noopener">Run your own →</a>
+        </p>
+
+        <div class="btn-row">
+          <button class="btn" id="connect">Connect</button>
+          <button class="btn secondary" id="disconnect" disabled>Disconnect</button>
+        </div>
+
+        <hr class="rule" />
+
+        <div class="field">
+          <label for="preset">Request</label>
+          <select id="preset">
+            <option value="https://check.torproject.org/api/ip">Tor IP check (JSON)</option>
+            <option value="https://check.torproject.org/">Tor check (HTML)</option>
+            <option value="https://api.ipify.org?format=json">ipify — your exit IP</option>
+            <option value="https://httpbin.org/get">httpbin — echo request</option>
+            <option value="custom">Custom URL…</option>
+          </select>
+        </div>
+        <div class="field" id="custom-field" hidden>
+          <input type="url" id="custom-url" class="mono" placeholder="https://example.com" spellcheck="false" />
+        </div>
+        <button class="btn" id="fetch" disabled>Send request →</button>
+      </div>
+
+      <!-- Output -->
+      <div class="stack">
+        <div class="card">
+          <div class="card-title">Response</div>
+          <div id="response" class="response empty">No request yet.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">
+            Client log
+            <button class="btn ghost sm" id="clear-log" style="margin-left:auto;">Clear</button>
+          </div>
+          <div id="log" class="console" style="height: 260px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/pages/demo.js"></script>
+</body>
+</html>

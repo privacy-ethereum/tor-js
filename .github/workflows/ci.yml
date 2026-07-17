@@ -64,16 +64,19 @@ jobs:
       - name: Build WASM + TS wrapper
         run: npm run build
 
-      - name: Assemble showcase site
+      # The website consumes tor-js via a file:.. link, so the package dist
+      # above must exist first.
+      - name: Build website
+        working-directory: website
         run: |
-          mkdir -p _site
-          cp examples/showcase/index.html _site/
-          cp examples/showcase/tor.svg _site/
-          cp -a dist _site/dist
+          npm ci
+          npm run build
+      - name: Assemble site
+        run: cp -a website/dist _site
       - uses: actions/upload-pages-artifact@v3
 
-  # Deploy the showcase to GitHub Pages — main only.
-  deploy-showcase:
+  # Deploy the website to GitHub Pages — main only.
+  deploy-site:
     needs: client
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
