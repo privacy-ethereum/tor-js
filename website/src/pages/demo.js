@@ -3,19 +3,24 @@ import '../tools.css';
 import { mountChrome } from '../chrome.js';
 
 mountChrome('demo');
+document.body.classList.add('has-drawer');
 
 const DEFAULT_GATEWAY = '170.64.236.147:12298:uEiBHwUMNRTetrbqScahm81Di57Xv2OphNrx-CurJGOq3ww';
 
 const $ = (id) => document.getElementById(id);
 const dot = $('dot'), statusEl = $('status');
 const gatewayInput = $('gateway'), connectBtn = $('connect'), disconnectBtn = $('disconnect');
+const stepRequest = $('step-request');
 const presetSel = $('preset'), customField = $('custom-field'), customUrl = $('custom-url');
-const fetchBtn = $('fetch'), responseEl = $('response'), logEl = $('log');
+const fetchBtn = $('fetch'), responseEl = $('response');
+const logEl = $('log'), logDrawer = $('log-drawer'), logToggle = $('log-toggle');
+const logLatest = $('log-latest'), logCount = $('log-count');
 
 gatewayInput.value = DEFAULT_GATEWAY;
 
 let client = null;
 let TorLib = null; // lazily imported so the 2.3 MB WASM only loads on connect
+let count = 0;
 
 function setStatus(state, text) {
   dot.className = 'dot' + (state ? ' ' + state : '');
@@ -26,15 +31,31 @@ function log(level, msg) {
   const row = document.createElement('div');
   row.className = 'log-row';
   const cls = { info: 'log-i', error: 'log-err', warn: 'log-err', debug: 'log-t' }[level] || 'log-t';
-  row.innerHTML = `<span class="log-mark ${cls}">${level[0].toUpperCase()}</span><span>${escapeHtml(msg)}</span>`;
+  const mark = level[0].toUpperCase();
+  row.innerHTML = `<span class="log-mark ${cls}">${mark}</span><span>${escapeHtml(msg)}</span>`;
   logEl.appendChild(row);
   while (logEl.children.length > 500) logEl.removeChild(logEl.firstChild);
   logEl.scrollTop = logEl.scrollHeight;
+  // Collapsed drawer shows just the latest line (CSS truncates it).
+  logLatest.textContent = `${mark} · ${msg}`;
+  logCount.textContent = String(++count);
 }
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 }
+
+logToggle.addEventListener('click', () => {
+  const open = logDrawer.classList.toggle('open');
+  logToggle.setAttribute('aria-expanded', String(open));
+  if (open) logEl.scrollTop = logEl.scrollHeight;
+});
+$('clear-log').addEventListener('click', () => {
+  logEl.innerHTML = '';
+  count = 0;
+  logCount.textContent = '0';
+  logLatest.textContent = 'Cleared';
+});
 
 presetSel.addEventListener('change', () => {
   const custom = presetSel.value === 'custom';
@@ -42,9 +63,7 @@ presetSel.addEventListener('change', () => {
   if (custom) customUrl.focus();
 });
 
-function targetUrl() {
-  return presetSel.value === 'custom' ? customUrl.value.trim() : presetSel.value;
-}
+const targetUrl = () => (presetSel.value === 'custom' ? customUrl.value.trim() : presetSel.value);
 
 connectBtn.addEventListener('click', async () => {
   const gateway = gatewayInput.value.trim();
@@ -69,7 +88,7 @@ connectBtn.addEventListener('click', async () => {
     setStatus('ok', `Connected in ${secs}s`);
     log('info', `Ready in ${secs}s`);
     disconnectBtn.disabled = false;
-    fetchBtn.disabled = false;
+    stepRequest.classList.remove('locked');
   } catch (e) {
     setStatus('err', 'Connection failed');
     log('error', e?.message || String(e));
@@ -86,7 +105,7 @@ disconnectBtn.addEventListener('click', () => {
   connectBtn.disabled = false;
   gatewayInput.disabled = false;
   disconnectBtn.disabled = true;
-  fetchBtn.disabled = true;
+  stepRequest.classList.add('locked');
 });
 
 fetchBtn.addEventListener('click', async () => {
@@ -122,5 +141,3 @@ function renderResponse(res, body) {
     `<div class="rhdr">${escapeHtml(headers)}</div>` +
     `<div class="rbody">${escapeHtml(preview)}</div>`;
 }
-
-$('clear-log').addEventListener('click', () => { logEl.innerHTML = ''; });

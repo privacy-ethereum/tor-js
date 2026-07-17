@@ -17,32 +17,37 @@
       <p>Bootstrap a real Tor client in your browser and make an HTTP request over a live circuit. All crypto runs on your device; the gateway only relays encrypted bytes.</p>
     </div>
 
-    <div class="grid-2" style="margin-top: 26px;">
-      <!-- Controls -->
-      <div class="card">
-        <div class="status-row">
+    <div class="demo-steps">
+      <!-- 1. Connect -->
+      <section class="card demo-step" id="step-connect">
+        <div class="step-head">
+          <span class="step-badge">1</span>
+          <h2>Connect</h2>
           <span class="dot" id="dot"></span>
-          <span id="status">Not connected</span>
+          <span class="step-status" id="status">Not connected</span>
         </div>
-
-        <div class="field" style="margin-top:16px;">
+        <div class="field">
           <label for="gateway">Gateway address <span class="mut">(ip:port:certhash)</span></label>
           <input type="text" id="gateway" class="mono" spellcheck="false" />
         </div>
-        <p class="notice" id="gw-notice">
-          This defaults to a public demo gateway — limited capacity, may disappear.
+        <p class="notice">
+          Defaults to a public demo gateway — limited capacity, may disappear.
           <a href="https://github.com/privacy-ethereum/tor-js/tree/main/crates/tor-js-gateway" target="_blank" rel="noopener">Run your own →</a>
         </p>
-
         <div class="btn-row">
           <button class="btn" id="connect">Connect</button>
           <button class="btn secondary" id="disconnect" disabled>Disconnect</button>
         </div>
+      </section>
 
-        <hr class="rule" />
-
+      <!-- 2. Request -->
+      <section class="card demo-step locked" id="step-request">
+        <div class="step-head">
+          <span class="step-badge">2</span>
+          <h2>Request</h2>
+        </div>
         <div class="field">
-          <label for="preset">Request</label>
+          <label for="preset">URL</label>
           <select id="preset">
             <option value="https://check.torproject.org/api/ip">Tor IP check (JSON)</option>
             <option value="https://check.torproject.org/">Tor check (HTML)</option>
@@ -54,24 +59,32 @@
         <div class="field" id="custom-field" hidden>
           <input type="url" id="custom-url" class="mono" placeholder="https://example.com" spellcheck="false" />
         </div>
-        <button class="btn" id="fetch" disabled>Send request →</button>
-      </div>
+        <button class="btn" id="fetch">Send request →</button>
+      </section>
 
-      <!-- Output -->
-      <div class="stack">
-        <div class="card">
-          <div class="card-title">Response</div>
-          <div id="response" class="response empty">No request yet.</div>
+      <!-- 3. Response -->
+      <section class="card demo-step" id="step-response">
+        <div class="step-head">
+          <span class="step-badge">3</span>
+          <h2>Response</h2>
         </div>
-        <div class="card">
-          <div class="card-title">
-            Client log
-            <button class="btn ghost sm" id="clear-log" style="margin-left:auto;">Clear</button>
-          </div>
-          <div id="log" class="console" style="height: 260px;"></div>
-        </div>
-      </div>
+        <div id="response" class="response empty">No request yet.</div>
+      </section>
     </div>
+  </div>
+
+  <!-- Log drawer, collapsed by default -->
+  <div class="log-drawer" id="log-drawer">
+    <div class="log-bar">
+      <button class="log-toggle" id="log-toggle" aria-expanded="false" aria-controls="log">
+        <span class="log-chevron">▾</span>
+        <span class="log-bar-title">Log</span>
+        <span class="log-latest" id="log-latest">Idle — connect to begin</span>
+        <span class="log-count" id="log-count">0</span>
+      </button>
+      <button class="btn ghost sm" id="clear-log">Clear</button>
+    </div>
+    <div class="log-body"><div id="log" class="console"></div></div>
   </div>
 
   <script type="module" src="/src/pages/demo.js"></script>

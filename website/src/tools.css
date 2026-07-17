@@ -111,3 +111,43 @@
 .vlist-item .mini-flag.guard { border-color: #57d9e0; color: #9ff0f5; }
 .vlist-item .mini-flag.exit { border-color: #ff79c6; color: #ffb3e1; }
 .vlist-expanded { position: absolute; left: 0; right: 0; z-index: 2; background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
+
+/* ---- Demo stepper + log drawer ------------------------------------------ */
+.demo-steps { display: flex; flex-direction: column; gap: 16px; margin-top: 24px; }
+.demo-step { transition: opacity 0.2s; }
+.demo-step.locked { opacity: 0.45; pointer-events: none; }
+.step-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.step-head h2 { font-size: 1.15rem; margin: 0; letter-spacing: -0.01em; }
+.step-badge {
+  width: 28px; height: 28px; border-radius: 50%; flex: none;
+  display: grid; place-items: center;
+  background: rgba(157, 123, 255, 0.12); border: 1px solid var(--border-strong);
+  color: var(--violet-bright); font-weight: 700; font-size: 0.85rem;
+}
+.step-head .dot { margin-left: auto; }
+.step-status { font-size: 0.88rem; color: var(--text-dim); }
+
+/* Body gets bottom room so the collapsed drawer never hides the footer. */
+body.has-drawer { padding-bottom: 48px; }
+
+.log-drawer {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
+  background: rgba(12, 10, 18, 0.94);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid var(--border);
+}
+.log-bar { display: flex; align-items: center; padding-right: 14px; }
+.log-toggle {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px;
+  padding: 13px 24px; background: none; border: none; cursor: pointer;
+  color: var(--text-dim); font: inherit; text-align: left;
+}
+.log-toggle:hover { color: var(--text); }
+.log-chevron { font-size: 0.75rem; color: var(--text-muted); transition: transform 0.2s; }
+.log-drawer.open .log-chevron { transform: rotate(180deg); }
+.log-bar-title { font-weight: 600; font-size: 0.85rem; flex: none; }
+.log-latest { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 0.8rem; color: var(--text-muted); }
+.log-count { flex: none; font-size: 0.72rem; color: var(--text-muted); background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+.log-body { height: 0; overflow: hidden; transition: height 0.25s var(--ease); }
+.log-drawer.open .log-body { height: 42vh; }
+.log-body .console { height: 100%; border: none; border-top: 1px solid var(--border); border-radius: 0; }
