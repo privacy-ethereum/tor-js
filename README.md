@@ -1,6 +1,6 @@
 # tor-js
 
-Make HTTP requests through Tor from JavaScript. Works in browsers and Node.js.
+Make HTTPS requests through Tor from JavaScript. Works in browsers and Node.js.
 
 Uses [Arti](https://gitlab.torproject.org/tpo/core/arti) (the Tor Project's Rust implementation) compiled to WebAssembly.
 
