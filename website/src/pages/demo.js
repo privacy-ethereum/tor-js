@@ -1,6 +1,7 @@
 import '../theme.css';
 import '../tools.css';
 import { mountChrome } from '../chrome.js';
+import { renderResponse } from '../responseView.js';
 
 mountChrome('demo');
 document.body.classList.add('has-drawer');
@@ -118,10 +119,10 @@ fetchBtn.addEventListener('click', async () => {
   const t0 = performance.now();
   try {
     const res = await client.fetch(url);
-    const body = await res.text();
+    const bytes = new Uint8Array(await res.arrayBuffer());
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
-    log('info', `${res.status} in ${secs}s (${body.length} bytes)`);
-    renderResponse(res, body);
+    log('info', `${res.status} in ${secs}s (${bytes.length} bytes)`);
+    renderResponse(responseEl, { url, status: res.status, statusText: res.statusText, headers: res.headers, bytes, seconds: secs });
   } catch (e) {
     log('error', e?.message || String(e));
     responseEl.className = 'response';
@@ -130,14 +131,3 @@ fetchBtn.addEventListener('click', async () => {
     fetchBtn.disabled = false;
   }
 });
-
-function renderResponse(res, body) {
-  const ok = res.status >= 200 && res.status < 400;
-  const headers = [...res.headers.entries()].map(([k, v]) => `${k}: ${v}`).join('\n');
-  const preview = body.length > 4000 ? body.slice(0, 4000) + '\n… (truncated)' : body;
-  responseEl.className = 'response';
-  responseEl.innerHTML =
-    `<span class="rstatus ${ok ? 'ok' : 'bad'}">${res.status} ${escapeHtml(res.statusText || '')}</span>` +
-    `<div class="rhdr">${escapeHtml(headers)}</div>` +
-    `<div class="rbody">${escapeHtml(preview)}</div>`;
-}
