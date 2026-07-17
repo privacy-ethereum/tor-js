@@ -49,7 +49,9 @@
 .copied { color: var(--ok) !important; }
 
 /* Sections ---------------------------------------------------------------- */
-.section { padding: 68px 0; }
+/* Only vertical padding here — horizontal comes from .wrap (this rule loads
+   after .wrap, so a `padding` shorthand would clobber its side padding). */
+.section { padding-block: 68px; }
 .section-head { text-align: center; max-width: 640px; margin: 0 auto 44px; }
 .section-head p { font-size: 1.05rem; }
 .eyebrow {
@@ -118,6 +120,9 @@
 
 @media (max-width: 760px) {
   .steps, .features, .tools { grid-template-columns: 1fr; }
-  .arch { grid-template-columns: 1fr; }
-  .arch-arrow { transform: rotate(90deg); }
+  /* Stack the architecture nodes; center each cell so the (now vertical)
+     arrows sit centered between nodes instead of stretched and left-aligned. */
+  .arch { grid-template-columns: 1fr; justify-items: center; gap: 4px; }
+  .arch-node { padding: 14px 16px; }
+  .arch-arrow { transform: rotate(90deg); line-height: 1; }
 }

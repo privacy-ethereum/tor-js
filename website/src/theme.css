@@ -108,6 +108,7 @@ code, pre, .mono { font-family: var(--mono); }
   border-bottom: 1px solid var(--border);
 }
 .nav-inner {
+  position: relative;
   max-width: var(--maxw);
   margin: 0 auto;
   padding: 14px 24px;
@@ -116,9 +117,10 @@ code, pre, .mono { font-family: var(--mono); }
   gap: 22px;
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); }
-.brand svg { width: 26px; height: 26px; }
-.brand-name { font-size: 1.05rem; }
-.nav-links { display: flex; gap: 4px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+.brand svg { width: 26px; height: 26px; flex: none; }
+.brand-name { font-size: 1.05rem; white-space: nowrap; }
+.nav-toggle { display: none; }
+.nav-links { display: flex; gap: 4px; margin-left: auto; align-items: center; }
 .nav-links a {
   color: var(--text-dim);
   padding: 7px 13px;
@@ -250,4 +252,40 @@ input.mono, textarea.mono { font-family: var(--mono); font-size: 0.88rem; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
+}
+
+/* ---- Mobile nav --------------------------------------------------------- */
+@media (max-width: 720px) {
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    padding: 6px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .nav-toggle svg { width: 24px; height: 24px; }
+  .nav-toggle:hover { color: var(--text); }
+
+  .nav-links {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    margin: 0;
+    padding: 8px 16px 14px;
+    background: rgba(12, 10, 18, 0.98);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav.open .nav-links { display: flex; }
+  .nav-links a { padding: 11px 12px; font-size: 1rem; }
+  .nav-links a.gh { justify-content: flex-start; }
 }

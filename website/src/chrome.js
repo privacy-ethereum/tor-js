@@ -36,12 +36,21 @@ export function mountChrome(active) {
   nav.innerHTML = `
     <div class="nav-inner">
       <a class="brand" href="index.html">${ONION_SVG}<span class="brand-name">tor-js</span></a>
+      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
       <nav class="nav-links">
         ${links}
         <a class="gh" href="${REPO}" target="_blank" rel="noopener">${GH_SVG}<span>GitHub</span></a>
       </nav>
     </div>`;
   document.body.prepend(nav);
+
+  const toggle = nav.querySelector('.nav-toggle');
+  toggle.addEventListener('click', () => {
+    const open = nav.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', String(open));
+  });
 
   const footer = document.createElement('footer');
   footer.className = 'footer';
