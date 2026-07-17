@@ -36,6 +36,7 @@
   color: var(--text-dim);
   max-width: 640px;
   margin: 0 auto 30px;
+  text-wrap: balance;
 }
 .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
 .install-pill {

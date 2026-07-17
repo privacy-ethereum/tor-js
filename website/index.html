@@ -16,7 +16,7 @@
       <h1>Tor in <span class="gradient-text">JS</span>.</h1>
       <div class="hero-viz"><canvas id="hero-canvas"></canvas></div>
       <p class="lead">
-        Tor for all browsers by compiling the new rust implementation to WebAssembly.
+        Tor for all browsers by compiling the <a href="https://arti.torproject.org/" target="_blank" rel="noopener">new rust implementation</a> to WebAssembly.
       </p>
       <div class="cta-row">
         <a class="btn" href="demo.html">Try the live demo →</a>
@@ -94,7 +94,7 @@ console.<span class="f">log</span>(<span class="k">await</span> res.<span class=
     <section class="section wrap">
       <div class="section-head">
         <div class="eyebrow">Architecture</div>
-        <h2>The gateway is a dumb pipe</h2>
+        <h2>The gateway is a blind relay</h2>
         <p>Browsers can't open raw TCP, so a small gateway relays bytes to Tor relays over <a href="https://github.com/privacy-ethereum/kps" target="_blank" rel="noopener">KPS</a> (WebRTC/QUIC). It never sees your traffic or destination.</p>
       </div>
       <div class="card arch">
