@@ -12,9 +12,8 @@
 </head>
 <body>
   <section class="hero">
-    <canvas id="hero-canvas"></canvas>
     <div class="hero-content">
-      <h1>Tor, right in the<br /><span class="gradient-text">browser</span>.</h1>
+      <h1>Tor in <span class="gradient-text">JS</span>.</h1>
       <p class="lead">
         Make HTTP requests through Tor from JavaScript. Real Tor circuits, built
         client-side in WebAssembly — every byte of crypto runs on your device.
@@ -30,6 +29,7 @@
         </button>
       </div>
     </div>
+    <div class="hero-viz"><canvas id="hero-canvas"></canvas></div>
   </section>
 
   <main>
@@ -70,7 +70,9 @@
           <div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="name">example.js</span></div>
 <pre><span class="k">import</span> { TorClient } <span class="k">from</span> <span class="s">'tor-js'</span>;
 
-<span class="k">const</span> client = <span class="k">new</span> <span class="f">TorClient</span>();
+<span class="k">const</span> client = <span class="k">new</span> <span class="f">TorClient</span>({
+  gateway: <span class="s">'198.51.100.7:12298:uEiAxk…9Qw'</span>, <span class="c">// ip:port:certhash</span>
+});
 <span class="k">const</span> res = <span class="k">await</span> client.<span class="f">fetch</span>(<span class="s">'https://check.torproject.org/api/ip'</span>);
 console.<span class="f">log</span>(<span class="k">await</span> res.<span class="f">json</span>()); <span class="c">// { IsTor: true, IP: "..." }</span></pre>
         </div>

@@ -16,9 +16,15 @@ for (const el of document.querySelectorAll('[data-copy]')) {
       const label = el.querySelector('.copy-label');
       if (label) {
         const prev = label.textContent;
+        // Freeze the width so swapping to "copied!" doesn't shrink the button.
+        label.style.minWidth = label.offsetWidth + 'px';
         label.textContent = 'copied!';
         label.classList.add('copied');
-        setTimeout(() => { label.textContent = prev; label.classList.remove('copied'); }, 1400);
+        setTimeout(() => {
+          label.textContent = prev;
+          label.classList.remove('copied');
+          label.style.minWidth = '';
+        }, 1400);
       }
     } catch { /* clipboard unavailable */ }
   });
