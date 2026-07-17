@@ -2,6 +2,7 @@ import '../theme.css';
 import '../tools.css';
 import { mountChrome } from '../chrome.js';
 import { Gateway, smartBootstrapDownload, parseBootstrapZip } from '../torJsGateway.js';
+import { renderExplorer } from '../explorer.js';
 
 mountChrome('bootstrap');
 
@@ -60,9 +61,19 @@ fetchBtn.addEventListener('click', async () => {
     const gwc = gateway();
     const zip = await smartBootstrapDownload(gwc, onEvent);
     cachedZip = zip;
-    const { consensus, microdescs, authcerts } = parseBootstrapZip(zip, onEvent);
-    render(zip, consensus, microdescs, authcerts);
+    const docs = parseBootstrapZip(zip, onEvent);
+    render(zip, docs.consensus, docs.microdescs, docs.authcerts);
     downloadBtn.disabled = false;
+    // Full searchable relay explorer (SHA-256 microdesc join can take a moment).
+    decTxt.textContent = `${decTxt.textContent} · indexing relays…`;
+    await renderExplorer(docs, {
+      search: $('explorer-search'),
+      consensus: $('block-consensus'),
+      authcerts: $('block-authcerts'),
+      microdescs: $('block-microdescs'),
+      section: $('explorer'),
+    });
+    $('explorer').hidden = false;
   } catch (e) {
     dlTxt.textContent = 'Failed: ' + (e?.message || e);
   } finally {

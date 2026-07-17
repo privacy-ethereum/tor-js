@@ -44,6 +44,15 @@
       <div class="card-title">Consensus header</div>
       <div id="consensus" class="console" style="max-height: 260px;"></div>
     </div>
+
+    <div class="explorer" id="explorer" hidden>
+      <div class="explorer-search">
+        <input type="text" id="explorer-search" class="mono" placeholder="Search relays, microdescs, certs…  (Esc to clear)" spellcheck="false" />
+      </div>
+      <div class="result-block" id="block-consensus"></div>
+      <div class="result-block" id="block-authcerts"></div>
+      <div class="result-block" id="block-microdescs"></div>
+    </div>
   </div>
 
   <script type="module" src="/src/pages/bootstrap.js"></script>
