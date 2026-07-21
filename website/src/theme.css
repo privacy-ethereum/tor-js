@@ -150,6 +150,12 @@ code, pre, .mono { font-family: var(--mono); }
   transition: transform 0.15s var(--ease), box-shadow 0.2s, background 0.2s, border-color 0.2s, opacity 0.2s;
   color: #fff;
   background: var(--grad-brand);
+  /* Paint area (background-clip) defaults to border-box but the gradient's
+     origin defaults to padding-box, so the 1px transparent border strip falls
+     outside the gradient and clamps to its start color — a pink seam on the
+     top-left edge. Origin border-box makes the gradient span the full painted
+     area, so the border pixels get the true interpolated color. */
+  background-origin: border-box;
   box-shadow: var(--glow);
 }
 .btn:hover { transform: translateY(-2px); }
