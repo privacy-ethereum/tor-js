@@ -9,8 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@kpstreams/core": "^0.2.0",
-    "@kpstreams/webrtc-client": "^0.2.0",
+    "@kpstreams/core": "^0.2.1",
+    "@kpstreams/webrtc-client": "^0.2.1",
     "fzstd": "^0.1.1",
     "tor-js": "file:.."
   },
