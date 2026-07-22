@@ -151,12 +151,16 @@ export class KpsGateway {
       const p = kpsDial(this.#address).then(
         (conn) => {
           this.#teardowns.set(conn, new Set());
-          conn.closed.then(() => {
+          // conn.closed may resolve OR reject (kps rejects it with the close
+          // reason, e.g. null, on some teardowns); run cleanup either way and
+          // never leave the rejection unhandled.
+          const onClosed = () => {
             if (this.#connPromise === p) this.#connPromise = null;
             const teardowns = this.#teardowns.get(conn);
             this.#teardowns.delete(conn);
             for (const fn of teardowns ?? []) fn();
-          });
+          };
+          conn.closed.then(onClosed, onClosed);
           return conn;
         },
         (err) => {
@@ -286,10 +290,13 @@ export class KpsGateway {
       },
     });
 
-    const closed: Promise<ArtiSocketCloseInfo> = stream.closed.then((info) => ({
-      ok: info.ok,
-      reason: info.ok ? undefined : (info.reason?.code ?? 'error'),
-    }));
+    // stream.closed may reject (kps surfaces the close reason that way, e.g.
+    // null); normalize both outcomes to a resolved ArtiSocketCloseInfo so this
+    // never becomes an unhandled rejection.
+    const closed: Promise<ArtiSocketCloseInfo> = stream.closed.then(
+      (info) => ({ ok: info.ok, reason: info.ok ? undefined : (info.reason?.code ?? 'error') }),
+      (err) => ({ ok: false, reason: err?.code ?? err?.message ?? 'closed' }),
+    );
 
     // The JS kps client doesn't reliably settle streams when the connection
     // dies (kps ISSUES #4), which would hang a pending read forever. Cancel

@@ -305,7 +305,17 @@ impl JsProxyStream {
 impl Drop for JsProxyStream {
     fn drop(&mut self) {
         // Cancel the reader to unblock any pending read, then close the socket.
-        let _ = self.reader.cancel();
+        //
+        // reader.cancel() returns a Promise that REJECTS when the stream was
+        // already errored — which is the normal teardown order here: the KPS
+        // connection is usually closed (erroring its open streams, per KPS SPEC
+        // §9.2) before arti drops these stream objects. Dropping that rejected
+        // promise uncaught surfaces as an unhandledRejection and crashes Node,
+        // so drive it to completion and swallow the result.
+        wasm_bindgen_futures::spawn_local({
+            let cancel = self.reader.cancel();
+            async move { let _ = wasm_bindgen_futures::JsFuture::from(cancel).await; }
+        });
         let _ = self.js_close();
     }
 }
