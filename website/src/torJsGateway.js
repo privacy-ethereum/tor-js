@@ -127,10 +127,13 @@ export class Gateway {
       const p = dial(this.#address).then(
         (conn) => {
           this.#onEvent?.({ type: 'connected', address: this.#address });
-          conn.closed.then(() => {
+          // closed may resolve OR reject (kps can reject it with the close
+          // reason); run cleanup either way and never leave it unhandled.
+          const onClosed = () => {
             if (this.#connPromise === p) this.#connPromise = null;
             this.#onEvent?.({ type: 'disconnected' });
-          });
+          };
+          conn.closed.then(onClosed, onClosed);
           return conn;
         },
         (err) => {
@@ -248,9 +251,15 @@ export class Gateway {
       readable = new ReadableStream({
         start(c) { c.enqueue(head.extra); },
         async pull(c) {
-          const { done, value } = await reader.read();
-          if (done) c.close();
-          else if (value?.length) c.enqueue(value);
+          try {
+            const { done, value } = await reader.read();
+            if (done) c.close(); // server FIN
+            else if (value?.length) c.enqueue(value);
+          } catch (e) {
+            // A local close/reset errors the read (kps SPEC §9.2) rather than
+            // EOF; surface it on the stream instead of leaking the rejection.
+            c.error(e);
+          }
         },
         cancel(reason) { reader.cancel(reason).catch(() => {}); },
       });
@@ -262,9 +271,11 @@ export class Gateway {
     return {
       readable,
       writable: stream.writable,
-      closed: stream.closed,
+      // Normalize to always resolve so a consumer's `.then` can't leak an
+      // unhandled rejection if kps rejects `closed` on teardown.
+      closed: stream.closed.then((i) => i, (e) => ({ ok: false, reason: e?.code ?? e?.message ?? 'closed' })),
       closeWrite: () => stream.closeWrite(),
-      close: () => stream.close(),
+      close: () => { stream.close().catch(() => {}); },
     };
   }
 
@@ -274,7 +285,9 @@ export class Gateway {
     this.#connPromise = null;
     if (p) {
       const conn = await p.catch(() => null);
-      await conn?.close();
+      // close() can reject on teardown (e.g. erroring still-open halves);
+      // swallow so callers that don't await close() don't get an unhandled rejection.
+      await conn?.close().catch(() => {});
     }
   }
 }
