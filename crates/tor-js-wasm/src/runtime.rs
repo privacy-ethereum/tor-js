@@ -36,7 +36,6 @@ use std::borrow::Cow;
 use async_trait::async_trait;
 use futures::task::{Spawn, SpawnError};
 use futures::{stream, AsyncRead, AsyncWrite, Future};
-use wasm_bindgen::JsCast;
 use std::fmt::Debug;
 use std::io::{self, Result as IoResult};
 use std::net::SocketAddr;
