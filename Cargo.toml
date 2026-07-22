@@ -33,4 +33,4 @@ opt-level = 2
 # repo's libs/rust/Cargo.toml — keep the two in sync.
 # Upstream: https://github.com/webrtc-rs/webrtc/issues/816
 [patch.crates-io]
-webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "2d730447917bbf775cda0ad967ea3e737de46ef7" }
+webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }

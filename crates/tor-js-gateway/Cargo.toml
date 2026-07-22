@@ -17,7 +17,7 @@ tor-dircommon = "0.44.0"
 tor-llcrypto = "0.44.0"
 
 # KPS transport (QUIC + WebRTC on one UDP port)
-kps = { git = "https://github.com/privacy-ethereum/kps", rev = "0db55b985b708ab5e864a6af5d7d1a887a5e61b5" }
+kps = { git = "https://github.com/privacy-ethereum/kps", tag = "v0.2.0" }
 
 # HTTP over KPS streams (PROTOCOL.md: KPS-HTTP/1)
 hyper = { version = "1", features = ["server", "http1"] }
