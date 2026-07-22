@@ -13,7 +13,13 @@ Built with [Arti](https://gitlab.torproject.org/tpo/core/arti), the Rust Tor imp
 
 ## Quick start
 
-Requires Rust 1.91+.
+Requires Rust 1.91+ and a C toolchain with a few system libraries. On Debian/Ubuntu:
+
+```
+sudo apt install build-essential pkg-config libssl-dev libsqlite3-dev
+```
+
+(`libssl-dev` for Arti's native-TLS, `libsqlite3-dev` for its on-disk state store. `clang`/`cmake` may also be needed depending on your platform.)
 
 ```
 cargo install --path .
