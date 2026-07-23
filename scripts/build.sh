@@ -27,6 +27,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Start from a clean dist/ so stale artifacts never leak into a build (or a
+# published tarball).
+rm -rf dist
+
 echo "Building tor-js WASM ($PROFILE)..."
 wasm-pack build crates/tor-js-wasm --target web $PROFILE
 

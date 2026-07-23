@@ -52,6 +52,7 @@
   "scripts": {
     "build": "bash scripts/build.sh --release",
     "build:ts": "node build.mjs",
+    "prepublishOnly": "npm run build",
     "clean": "rm -rf dist crates/tor-js-wasm/pkg target",
     "website": "npm --prefix website run dev"
   },
