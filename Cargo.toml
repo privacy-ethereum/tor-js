@@ -32,8 +32,10 @@ opt-level = 2
 # root — Cargo ignores it in a member.
 #   - webrtc-sctp: read-shutdown drain (webrtc-rs/webrtc#816) + zero-window
 #     deadlock on tail-of-burst loss (webrtc-rs/webrtc#822)
-#   - webrtc: negotiated-channel accept race — an early inbound message parsed
-#     as DCEP kills the accept loop (webrtc-rs/webrtc#821)
+#   - webrtc: (1) negotiated-channel accept race — an early inbound message
+#     parsed as DCEP kills the accept loop (webrtc-rs/webrtc#821); (2) gate the
+#     id-reuse claim on ReadyState::Open so a stale closed channel doesn't
+#     shadow a reused SCTP stream id, hanging reads after ~2 streams (kps#4)
 [patch.crates-io]
 webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }
-webrtc = { git = "https://github.com/privacy-ethereum/kps.git", rev = "1b5884131892c8f78d2bbf5c829bf75e8c850438" }
+webrtc = { git = "https://github.com/privacy-ethereum/kps.git", rev = "4982e1c1cdce3baa3f703a746367a5e53ca64928" }
