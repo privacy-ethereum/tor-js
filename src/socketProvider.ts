@@ -11,6 +11,7 @@
  */
 
 import { KpsGateway } from './kpsGateway.js';
+import type { DialFn } from './kpsDial.js';
 
 // ---------------------------------------------------------------------------
 // Environment detection
@@ -130,13 +131,21 @@ export class ArtiSocket {
  */
 export interface ArtiSocketProviderOptions {
   /**
-   * Gateway KPS address (`ip:port:certhash`, e.g.
-   * `"198.51.100.7:12298:uEiAxk...9Qw"`).
-   * Required in browsers for relay connections.
-   * Optional in Node.js/Deno (enables fast bootstrap and gateway fallback
-   * when provided; requires the optional `@kpstreams/quic-client` package).
+   * Gateway KPS address(es) (`ip:port:certhash`, e.g.
+   * `"198.51.100.7:12298:uEiAxk...9Qw"`). Pass an array of redundant gateways
+   * to fail over between them (each relay connection sticks to the last one
+   * that worked). Required in browsers for relay connections. Optional in
+   * Node.js/Deno (enables fast bootstrap and gateway fallback when provided;
+   * requires the optional `@kpstreams/quic-client` package).
    */
-  gateway?: string;
+  gateway?: string | string[];
+
+  /**
+   * Custom KPS dialer, applied to every gateway. Defaults to the built-in
+   * WebRTC/QUIC dialer. Inject one to reach gateways over a transport you
+   * already hold (e.g. a KPS capability granted to a sandboxed worker).
+   */
+  dial?: DialFn;
 
   /**
    * Ordered list of strategies to try: `"direct"`, `"kps"`.
@@ -154,25 +163,35 @@ export interface ArtiSocketProviderOptions {
  * strategy becomes available (the only option in browsers).
  */
 export class ArtiSocketProvider {
-  #gateway: KpsGateway | null = null;
+  #gateways: KpsGateway[] = [];
+  /** Index of the gateway that last connected — tried first next time. */
+  #primaryIdx = 0;
   #strategies: string[];
 
   constructor(options: ArtiSocketProviderOptions = {}) {
-    if (options.gateway) {
-      if (/^(https?|wss?):\/\//.test(options.gateway)) {
+    const addresses =
+      options.gateway == null ? []
+      : Array.isArray(options.gateway) ? options.gateway
+      : [options.gateway];
+    for (const address of addresses) {
+      if (/^(https?|wss?):\/\//.test(address)) {
         throw new Error(
-          `gateway is now a KPS address ("ip:port:certhash"), not a URL — got "${options.gateway}". ` +
+          `gateway is now a KPS address ("ip:port:certhash"), not a URL — got "${address}". ` +
           'Gateways expose their address at startup and in /metadata.json.',
         );
       }
-      this.#gateway = new KpsGateway(options.gateway);
+      this.#gateways.push(new KpsGateway(address, { dial: options.dial }));
     }
-    this.#strategies = options.strategies ?? defaultStrategies(!!this.#gateway);
+    this.#strategies = options.strategies ?? defaultStrategies(this.#gateways.length > 0);
   }
 
-  /** The KPS gateway client, when a gateway address was configured. */
+  /**
+   * The KPS gateway client used for fast bootstrap, when configured. With
+   * multiple gateways this is the one that last connected a relay (or the
+   * first, before any connection).
+   */
   get gateway(): KpsGateway | null {
-    return this.#gateway;
+    return this.#gateways[this.#primaryIdx] ?? this.#gateways[0] ?? null;
   }
 
   /**
@@ -200,9 +219,9 @@ export class ArtiSocketProvider {
     throw new Error(`all strategies failed for ${target}: ${errors.join('; ')}`);
   }
 
-  /** Close the KPS gateway connection and release resources. */
+  /** Close all KPS gateway connections and release resources. */
   close(): void {
-    this.#gateway?.close();
+    for (const gw of this.#gateways) gw.close();
   }
 
   // -- Direct TCP strategy (Node.js / Deno) ---------------------------------
@@ -232,7 +251,23 @@ export class ArtiSocketProvider {
   // -- KPS gateway strategy -------------------------------------------------
 
   async #connectKps(target: string): Promise<ArtiSocket> {
-    if (!this.#gateway) throw new Error('kps strategy requires a gateway address');
-    return this.#gateway.connect(target);
+    const gateways = this.#gateways;
+    if (!gateways.length) throw new Error('kps strategy requires a gateway address');
+    if (gateways.length === 1) return gateways[0].connect(target);
+
+    // Try each gateway starting from the last-good one, sticking to whichever
+    // connects so subsequent tunnels (and fast bootstrap) reuse it.
+    const errors: string[] = [];
+    for (let k = 0; k < gateways.length; k++) {
+      const idx = (this.#primaryIdx + k) % gateways.length;
+      try {
+        const sock = await gateways[idx].connect(target);
+        this.#primaryIdx = idx;
+        return sock;
+      } catch (e: any) {
+        errors.push(`${gateways[idx].address}: ${e.message}`);
+      }
+    }
+    throw new Error(`all gateways failed: ${errors.join('; ')}`);
   }
 }

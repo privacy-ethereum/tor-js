@@ -27,7 +27,10 @@ export class TorClient {
   private socketProvider: ArtiSocketProvider | null = null;
 
   constructor(options: TorClientOptions = {}) {
-    if (isBrowser() && !options.gateway && !options.socketProvider) {
+    const hasGateway = Array.isArray(options.gateway)
+      ? options.gateway.length > 0
+      : !!options.gateway;
+    if (isBrowser() && !hasGateway && !options.socketProvider) {
       throw new Error(
         'TorClient: in the browser, you must configure a gateway (KPS address "ip:port:certhash") ' +
         'because browsers can\'t open regular TCP sockets.',

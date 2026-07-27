@@ -14,12 +14,12 @@ export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error';
  */
 export type TorClientOptions = {
   /**
-   * Gateway KPS address (`ip:port:certhash`, e.g.
+   * Gateway KPS address(es) (`ip:port:certhash`, e.g.
    * `"198.51.100.7:12298:uEiAxk...9Qw"` — printed by tor-js-gateway at
-   * startup). Required in browsers for relay connections; optional in
-   * Node.js/Deno.
+   * startup). Pass an array of redundant gateways to fail over between them.
+   * Required in browsers for relay connections; optional in Node.js/Deno.
    */
-  gateway?: string;
+  gateway?: string | string[];
 
   /**
    * Optional logger instance.

@@ -12,7 +12,9 @@
  * gateway's 200 the stream is the raw TCP byte pipe to the relay.
  */
 
-import { parseAddress, type Connection, type Stream } from '@kpstreams/core';
+import type { Connection, Stream } from '@kpstreams/core';
+import { parseAddress } from './kpsAddress.js';
+import type { DialFn } from './kpsDial.js';
 import { ArtiSocket, type ArtiSocketCloseInfo } from './socketProvider.js';
 
 const enc = new TextEncoder();
@@ -84,35 +86,23 @@ function concat(chunks: Uint8Array[], length: number): Uint8Array {
   return out;
 }
 
-/**
- * Pick the KPS dialer for this environment: WebRTC in browsers, QUIC in
- * Node/Deno via the optional @kpstreams/quic-client package.
- */
-async function kpsDial(address: string): Promise<Connection> {
-  if (typeof (globalThis as any).RTCPeerConnection !== 'undefined') {
-    const { dial } = await import('@kpstreams/webrtc-client');
-    return dial(address);
-  }
-  // Non-literal specifier so bundlers don't try to resolve the optional
-  // native package into browser builds.
-  const quicClientPkg = '@kpstreams/quic-client';
-  let mod: { dial: (addr: string) => Promise<Connection> };
-  try {
-    mod = await import(/* @vite-ignore */ quicClientPkg);
-  } catch {
-    throw new Error(
-      'kps: no transport available. Browsers need RTCPeerConnection; ' +
-      "in Node, install the optional '@kpstreams/quic-client' package to reach a gateway over QUIC.",
-    );
-  }
-  return mod.dial(address);
-}
-
 export interface GatewayResponse {
   status: number;
   statusText: string;
   headers: Record<string, string>;
   body: Uint8Array;
+}
+
+/** Options for {@link KpsGateway}. */
+export interface KpsGatewayOptions {
+  /**
+   * Custom KPS dialer. Defaults to the built-in WebRTC (browser) / QUIC (Node)
+   * dialer, which is imported lazily so it only loads when this is omitted.
+   * Inject a dialer to reach the gateway over a transport you already hold
+   * (e.g. a KPS capability granted to a sandboxed worker); then the built-in
+   * dialer and its `@kpstreams` client deps are never loaded.
+   */
+  dial?: DialFn;
 }
 
 /**
@@ -131,13 +121,18 @@ export class KpsGateway {
   // registers a teardown that conn.closed triggers.
   #teardowns = new Map<Connection, Set<() => void>>();
   #closed = false;
+  #dial: DialFn | undefined;
 
-  /** @param address KPS address (`ip:port:certhash`). */
-  constructor(address: string) {
+  /**
+   * @param address KPS address (`ip:port:certhash`).
+   * @param options Optional {@link KpsGatewayOptions} (e.g. a custom `dial`).
+   */
+  constructor(address: string, options: KpsGatewayOptions = {}) {
     this.#address = address.trim();
     // Validates the address shape early and yields the certhash, which is
     // the Host value the protocol recommends (PROTOCOL.md §3.2).
     this.#certhash = parseAddress(this.#address).certhash;
+    this.#dial = options.dial;
   }
 
   get address(): string {
@@ -148,7 +143,13 @@ export class KpsGateway {
   async #connection(): Promise<Connection> {
     if (this.#closed) throw new Error('KpsGateway is closed');
     if (!this.#connPromise) {
-      const p = kpsDial(this.#address).then(
+      // Resolve the dialer inside the promise chain — lazy-importing the
+      // built-in one only when no custom `dial` was injected — so #connPromise
+      // is still assigned synchronously and concurrent callers share one dial.
+      const dialP: Promise<DialFn> = this.#dial
+        ? Promise.resolve(this.#dial)
+        : import('./kpsDial.js').then((m) => (this.#dial = m.kpsDial));
+      const p = dialP.then((dial) => dial(this.#address)).then(
         (conn) => {
           this.#teardowns.set(conn, new Set());
           // conn.closed may resolve OR reject (kps rejects it with the close
