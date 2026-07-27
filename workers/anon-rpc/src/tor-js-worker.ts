@@ -26,12 +26,6 @@ import {
 
 declare const anonRpcWorker: AnonRpcWorkerApi;
 
-// Fallback gateway when the host supplies none via `config`. A hash-pinned
-// worker's baked gateway list is part of what an auditor reviews.
-const DEFAULT_GATEWAYS = [
-  "170.64.236.147:12298:uEiBHwUMNRTetrbqScahm81Di57Xv2OphNrx-CurJGOq3ww",
-];
-
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
@@ -81,22 +75,35 @@ function makeTorStorage(s: StorageApi): TorStorage {
   };
 }
 
+// Gateways are MANDATORY and come from the host's WorkerInit.config — either a
+// KPS address string, an array of them, or `{ gateways: [...] }`. There is no
+// default: a gateway sees all of this worker's relay traffic, so the choice
+// must be the deploying app's, not baked into shared worker code.
 function resolveGateways(config: unknown): string[] {
   const asList = (v: unknown): string[] | null =>
     typeof v === "string" && v ? [v]
     : Array.isArray(v) && v.length && v.every((x) => typeof x === "string") ? (v as string[])
     : null;
-  return (
-    asList(config) ??
-    asList((config as { gateways?: unknown } | null)?.gateways) ??
-    DEFAULT_GATEWAYS
-  );
+  const gateways = asList(config) ?? asList((config as { gateways?: unknown } | null)?.gateways);
+  if (!gateways) {
+    throw new Error(
+      "tor-js worker: no gateway configured. Supply gateway KPS address(es) via the host's " +
+      'WorkerInit.config — e.g. config: { gateways: ["<ip>:<port>:<certhash>", ...] } or ' +
+      'config: "<ip>:<port>:<certhash>". There is no default gateway.',
+    );
+  }
+  return gateways;
 }
 
 (async () => {
-  const { log, kps, storage, config } = anonRpcWorker;
-  void kps; // used via `dial` above
-  const gateways = resolveGateways(config);
+  const { log, storage, config } = anonRpcWorker;
+  let gateways: string[];
+  try {
+    gateways = resolveGateways(config); // kps transport reached via `dial` above
+  } catch (e) {
+    log.error(errMsg(e));
+    return; // never signalReady — the host sees the worker fail to come up
+  }
   log.info(`tor-js worker: bootstrapping over ${gateways.length} gateway(s)`);
 
   const client = new TorClient({

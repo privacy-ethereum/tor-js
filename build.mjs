@@ -4,12 +4,13 @@ import { execSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
+import { buildAnonRpcWorker } from './workers/anon-rpc/build.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgDir = resolve(__dirname, 'crates/tor-js-wasm/pkg');
 const distDir = resolve(__dirname, 'dist');
 
-function main() {
+async function main() {
   const { wasmBytes, wasmHash } = computeWasmHash();
   const version = readPackageVersion();
   const base64File = generateBase64Data(wasmBytes);
@@ -20,11 +21,22 @@ function main() {
     () => cleanBase64Data(base64File),
     generateDeclarationMaps,
     copyWasmFiles,
+    buildWorker,
     verifyDeclarationMaps,
     verifyGzipSizes,
   ];
 
-  for (const step of steps) step();
+  for (const step of steps) await step();
+}
+
+// Bundle the anon-rpc worker into the package dist so CDNs host it (its CDN
+// URLs can then serve as anon-rpc specifier resolvers). See workers/anon-rpc/.
+async function buildWorker() {
+  const { bytes, sha256 } = await buildAnonRpcWorker({
+    root: __dirname,
+    outfile: resolve(distDir, 'anon-rpc-worker.js'),
+  });
+  console.log(`Built anon-rpc worker: dist/anon-rpc-worker.js ${(bytes / 1024 / 1024).toFixed(2)} MB (sha256 ${sha256.slice(0, 16)}…)`);
 }
 
 function cleanDist() {
@@ -167,4 +179,7 @@ function verifyGzipSizes() {
   console.log('Gzip sizes match README (within 5%)');
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
