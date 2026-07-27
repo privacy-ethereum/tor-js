@@ -1,0 +1,14 @@
+{
+  "name": "tor-js-anon-rpc-worker-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:e2e": "node run-e2e.mjs"
+  },
+  "devDependencies": {
+    "@anon-rpc/browser-harness": "latest",
+    "@noble/hashes": "^1.5.0",
+    "esbuild": "^0.25.0",
+    "playwright": "^1.55.0"
+  }
+}
