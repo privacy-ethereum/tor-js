@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:e2e": "node run-e2e.mjs"
+    "test:e2e": "node run-e2e.mjs",
+    "test:hermetic": "node hermetic.mjs"
   },
   "devDependencies": {
     "@anon-rpc/browser-harness": "^0.3.0",

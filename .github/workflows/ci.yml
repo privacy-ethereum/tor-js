@@ -64,6 +64,25 @@ jobs:
       - name: Build WASM + TS wrapper
         run: npm run build
 
+      # anon-rpc worker (dist/anon-rpc-worker.js is produced by the build above):
+      # assert the shipped bundle is clean, then run the offline harness test.
+      # The real Tor fetch (test:e2e) is intentionally NOT in CI — it needs live
+      # Tor egress and can't be hermetic; CI stays network-free like the rest.
+      - name: anon-rpc worker — bundle assertions
+        run: |
+          f=dist/anon-rpc-worker.js
+          test -f "$f"
+          grep -q wasmBase64 "$f"                                    # WASM embedded
+          ! grep -qiE "createDataChannel|node_modules/@kpstreams" "$f"  # no KPS client code
+          ! grep -q "170.64.236.147" "$f"                            # no baked demo gateway
+          echo "worker bundle OK ($(du -h "$f" | cut -f1); no KPS client code; no baked gateway)"
+      - name: anon-rpc worker — hermetic harness test (offline)
+        working-directory: test/anon-rpc-worker
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm run test:hermetic
+
       # The website consumes tor-js via a file:.. link, so the package dist
       # above must exist first.
       - name: Build website
