@@ -49,9 +49,11 @@ export async function makeFixtures({ allowedTargets = [] } = {}) {
   // the /keccak/ route): one correctly placed, one whose path lies.
   const bundleBytes = Buffer.from(`export const fixture = '${randomBytes(8).toString('hex')}'\n`)
   const bundleHash = hex(keccak_256(bundleBytes))
-  await mkdir(join(bundlesDir, bundleHash.slice(0, 2)))
+  // recursive: the random bundle hash can share the fixed '00' prefix below
+  // (~1/256), in which case a plain mkdir of an existing dir throws EEXIST.
+  await mkdir(join(bundlesDir, bundleHash.slice(0, 2)), { recursive: true })
   await writeFile(join(bundlesDir, bundleHash.slice(0, 2), bundleHash.slice(2)), bundleBytes)
-  await mkdir(join(bundlesDir, '00'))
+  await mkdir(join(bundlesDir, '00'), { recursive: true })
   await writeFile(join(bundlesDir, '00', '0'.repeat(62)), Buffer.from('// wrong hash\n'))
 
   return {
