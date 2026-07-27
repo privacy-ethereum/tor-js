@@ -1,0 +1,13 @@
+{
+  "name": "tor-js-anon-rpc-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "An anon-rpc worker (SPEC.md §3.2) that services fetch calls over Tor via tor-js. It runs inside anon-rpc's sandboxed worker and reaches the network only through the host-granted KPS transport — bundled to a single hash-pinned IIFE with the WASM embedded and no @kpstreams client code.",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
