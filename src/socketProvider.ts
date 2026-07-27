@@ -257,6 +257,9 @@ export class ArtiSocketProvider {
 
     // Try each gateway starting from the last-good one, sticking to whichever
     // connects so subsequent tunnels (and fast bootstrap) reuse it.
+    // TODO(#9): gateway choice is analogous to Tor entry-guard selection
+    // (each gateway observes all relay connections); consider a persistent,
+    // rotation-reluctant guard-set approach rather than plain sticky failover.
     const errors: string[] = [];
     for (let k = 0; k < gateways.length; k++) {
       const idx = (this.#primaryIdx + k) % gateways.length;
