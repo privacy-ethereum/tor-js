@@ -6,7 +6,7 @@
     "test:e2e": "node run-e2e.mjs"
   },
   "devDependencies": {
-    "@anon-rpc/browser-harness": "latest",
+    "@anon-rpc/browser-harness": "^0.3.0",
     "@noble/hashes": "^1.5.0",
     "esbuild": "^0.25.0",
     "playwright": "^1.55.0"

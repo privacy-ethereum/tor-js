@@ -70,6 +70,7 @@
     "@kpstreams/core": "^0.2.1",
     "@kpstreams/webrtc-client": "^0.2.1",
     "@types/node": "^25.3.0",
+    "esbuild": "^0.25.12",
     "tsup": "^8.3.5",
     "typescript": "~5.7.3"
   },

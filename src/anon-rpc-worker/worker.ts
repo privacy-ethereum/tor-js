@@ -22,12 +22,19 @@ import {
   type DialFn,
   type FetchInit,
   type TorStorage,
-} from "../../../src/entryPoints/wasm-base64/index.js";
+} from "../entryPoints/wasm-base64/index.js";
 
 declare const anonRpcWorker: AnonRpcWorkerApi;
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
+
+// Delay between bootstrap retries. Bootstrap is retried indefinitely (the Tor
+// way): a down/unreachable gateway is transient, so we keep trying rather than
+// permanently failing readiness.
+const BOOTSTRAP_RETRY_MS = 5_000;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // --- Transport: bridge the host's KPS capability into tor-js's `dial` seam ---
 // anon-rpc's KpsConn/KpsStream are structurally the subset of @kpstreams/core's
@@ -96,28 +103,38 @@ function resolveGateways(config: unknown): string[] {
 }
 
 (async () => {
-  const { log, storage, config } = anonRpcWorker;
-  let gateways: string[];
+  const { log, storage } = anonRpcWorker;
+
+  // Construct the client. A missing/invalid gateway config (or a malformed
+  // address) is a PERMANENT error, so reject the host's `.ready` via
+  // signalFailed (§7) — retrying can't help. kps transport is reached via the
+  // module-level `dial` above.
+  let client!: TorClient;
   try {
-    gateways = resolveGateways(config); // kps transport reached via `dial` above
+    const gateways = resolveGateways(anonRpcWorker.config);
+    log.info(`tor-js worker: using ${gateways.length} gateway(s)`);
+    client = new TorClient({
+      socketProvider: new ArtiSocketProvider({ gateway: gateways, dial }),
+      storage: makeTorStorage(storage),
+    });
   } catch (e) {
-    log.error(errMsg(e));
-    return; // never signalReady — the host sees the worker fail to come up
+    anonRpcWorker.signalFailed({ message: errMsg(e) });
+    return;
   }
-  log.info(`tor-js worker: bootstrapping over ${gateways.length} gateway(s)`);
 
-  const client = new TorClient({
-    socketProvider: new ArtiSocketProvider({ gateway: gateways, dial }),
-    storage: makeTorStorage(storage),
-  });
-
-  // Wait for Tor to be usable before declaring readiness, so the host's
-  // `ready` means "warm" and the first fetch doesn't eat full bootstrap.
-  try {
-    await client.ready();
-  } catch (e) {
-    log.error("tor-js worker: bootstrap failed:", errMsg(e));
-    return; // never signalReady — the host sees the worker fail to come up
+  // Bootstrap the Tor way: retry indefinitely. A down/unreachable gateway is a
+  // transient condition — keep trying rather than permanently failing. We only
+  // signalReady once Tor is usable, so the host's `.ready` stays pending (never
+  // rejected) while bootstrap is still in progress, just like vanilla tor-js
+  // where each fetch re-attempts readiness.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await client.ready();
+      break;
+    } catch (e) {
+      log.warn(`tor-js worker: bootstrap attempt ${attempt} failed; retrying in ${BOOTSTRAP_RETRY_MS / 1000}s:`, errMsg(e));
+      await sleep(BOOTSTRAP_RETRY_MS);
+    }
   }
   log.info("tor-js worker: Tor ready");
   anonRpcWorker.signalReady();

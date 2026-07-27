@@ -20,11 +20,10 @@ import { fileURLToPath } from "node:url";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { build as esbuild } from "esbuild";
 import { chromium } from "playwright";
-import { buildAnonRpcWorker } from "../build.mjs";
+import { buildAnonRpcWorker } from "../../build.mjs";
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
-const torjsRoot = resolve(here, "../../..");
 
 const LIVE_GATEWAY =
   process.env.GATEWAY ||
@@ -59,7 +58,7 @@ async function main() {
   console.log("building tor-js anon-rpc worker...");
   const workerFile = resolve(here, ".tmp-worker.js");
   cleanups.push(() => rm(workerFile, { force: true }).catch(() => {}));
-  await buildAnonRpcWorker({ root: torjsRoot, outfile: workerFile, ensureWasm: true });
+  await buildAnonRpcWorker({ outfile: workerFile, ensureWasm: true });
   const workerBytes = new Uint8Array(await readFile(workerFile));
   const workerHash = "0x" + toHex(keccak_256(workerBytes));
   console.log(`worker: ${(workerBytes.length / 1024 / 1024).toFixed(2)} MB, keccak256=${workerHash.slice(0, 18)}…`);
@@ -129,12 +128,25 @@ async function main() {
     const r = await w.fetch("https://check.torproject.org/api/ip");
     const body = await r.json();
     w.close();
-    return { status: r.status, body, readyMs };
+
+    // Negative: a config with no gateway must reject .ready via signalFailed
+    // (not hang). Same bundle/specifier, empty config.
+    let noGatewayError = "";
+    try {
+      const bad = new window.AnonRpcWorker({ address: cfg.addr, config: {}, preExisting: { rpcProvider: provider } });
+      await bad.ready;
+      bad.close();
+    } catch (e) {
+      noGatewayError = String(e?.message ?? e);
+    }
+
+    return { status: r.status, body, readyMs, noGatewayError };
   }, { addr: WORKER_ADDR, gateways: [LIVE_GATEWAY], ethCallMap });
 
   console.log(`ready in ${result.readyMs}ms; HTTP ${result.status}; body: ${JSON.stringify(result.body)}`);
   check("fetch through Tor returned HTTP 200", result.status === 200, `status=${result.status}`);
   check("check.torproject.org reports IsTor:true", result.body?.IsTor === true, `body=${JSON.stringify(result.body)}`);
+  check("no-gateway config rejects .ready via signalFailed", /no gateway configured/.test(result.noGatewayError), `err=${result.noGatewayError}`);
 
   console.log("\n✅ e2e passed: tor-js anon-rpc worker made a real Tor request via the live gateway");
   cleanup();
