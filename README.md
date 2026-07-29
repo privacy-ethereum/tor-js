@@ -45,9 +45,9 @@ The package offers three ways to load the WASM binary. All export the same API.
 
 | Import | WASM loading | Size (gzip) | Best for |
 |---|---|---|---|
-| `tor-js` | Fetched from CDN, cached locally | 31 kB | Production web apps |
+| `tor-js` | Fetched from CDN, cached locally | 32 kB | Production web apps |
 | `tor-js/wasm-base64` | Embedded in the JS bundle | 2.3 MB | Single-file deploys |
-| `tor-js/wasm-file` | Loaded from `tor_js_bg.wasm` next to the module | 30 kB + 1.7 MB | Self-hosted, server-side |
+| `tor-js/wasm-file` | Loaded from `tor_js_bg.wasm` next to the module | 31 kB + 1.7 MB | Self-hosted, server-side |
 
 Each also has a `/singleton` variant (see [Singleton](#singleton) below).
 
@@ -59,14 +59,23 @@ Creates a Tor client and begins bootstrapping immediately.
 
 ```typescript
 type TorClientOptions = {
-  gateway?: string;       // Gateway KPS address "ip:port:certhash" (required in browsers, optional in Node.js/Deno)
-  log?: Log;              // Logger instance (default: silent)
-  storage?: TorStorage;   // Persistent storage (default: auto-detected)
-  logLevel?: LogLevel;    // 'trace' | 'debug' | 'info' | 'warn' | 'error'
+  gateway?: string | string[];         // Gateway KPS address(es) "ip:port:certhash" (required in browsers, optional in Node.js/Deno)
+  log?: Log;                           // Logger instance (default: silent)
+  storage?: TorStorage;                // Persistent storage (default: auto-detected)
+  logLevel?: LogLevel;                 // 'trace' | 'debug' | 'info' | 'warn' | 'error'
+  socketProvider?: ArtiSocketProvider; // Custom transport (overrides `gateway`)
 };
 ```
 
 The gateway is dialed over [KPS](https://privacy-ethereum.github.io/kps/) (WebRTC in browsers; QUIC in Node.js via the optional `@kpstreams/quic-client` package) and tunnels relay connections with HTTP `CONNECT`. In Node.js/Deno, connections go via direct TCP and the gateway is only used for fast bootstrap (optional).
+
+Pass several gateways for redundancy:
+
+```javascript
+new TorClient({ gateway: ['198.51.100.7:12298:uEiAxk…9Qw', '203.0.113.4:12298:uEiBz…7Kw'] });
+```
+
+The list is an **unordered set** — position implies no priority. Each client shuffles it and prefers one gateway, so independent clients spread across your fleet rather than all choosing the first. Under concurrent load traffic spreads across a small preferred set, favouring whichever gateway is carrying the least, and a gateway that fails is cooled off with exponential backoff and re-admitted once it recovers.
 
 ### `client.fetch(url, init?)`
 
@@ -82,6 +91,28 @@ const res = await client.fetch('https://example.com', {
   signal: AbortSignal.timeout(30_000),
 });
 ```
+
+```typescript
+type FetchInit = {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string | Uint8Array | ArrayBuffer | ReadableStream<Uint8Array>;
+  signal?: AbortSignal;
+};
+```
+
+Response bodies stream: `res.body` is a `ReadableStream` you can consume as it arrives, so a large download needn't be buffered.
+
+Request bodies stream too. A `ReadableStream` body is sent as it's produced, using `Transfer-Encoding: chunked` — so an upload of unknown or unbounded size never has to fit in memory:
+
+```javascript
+await client.fetch('https://example.com/upload', {
+  method: 'POST',
+  body: fileOrStream,   // any ReadableStream<Uint8Array>
+});
+```
+
+Bodies of known size (`string`, `Uint8Array`, `ArrayBuffer`) are sent with `Content-Length` instead.
 
 ### `client.ready()`
 

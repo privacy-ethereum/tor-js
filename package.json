@@ -1,6 +1,6 @@
 {
   "name": "tor-js",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "TypeScript Tor client using arti via WASM",
   "type": "module",
   "main": "dist/entryPoints/wasm-cdn/index.js",
