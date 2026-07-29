@@ -11,7 +11,13 @@
 //
 // ECHO must be an endpoint that echoes the POST body. Defaults to postman-echo
 // (returns the body as a Buffer — binary-safe). httpbin.org/post also works
-// (returns it as a string).
+// (returns it as a string). Public echoes de-chunk the body and hide the
+// request framing, so they can only prove the round-trip.
+//
+// To additionally PROVE the body went out as Transfer-Encoding: chunked, point
+// ECHO at echo-server.mjs (in this dir) on a Tor-reachable host — it reports the
+// framing it received, and the test then asserts chunked + no Content-Length:
+//   ECHO=http://<public-ip>:8080/ npm run test:stream-upload
 
 import { setupHarness, check, cleanup, fail, guard, WORKER_ADDR } from "./harness.mjs";
 
@@ -65,39 +71,46 @@ async function main() {
     const status = r.status;
     const j = await r.json();
 
-    // Reconstruct the echoed body across the common echo shapes.
-    const extract = (d) => {
-      if (d && typeof d === "object" && d.type === "Buffer" && Array.isArray(d.data)) {
-        return new Uint8Array(d.data); // postman-echo
-      }
-      if (typeof d === "string" && d.startsWith("data:")) {
-        const bin = atob(d.split(",", 2)[1]); // httpbingo base64 data-uri
-        const u = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
-        return u;
-      }
-      if (typeof d === "string") return new TextEncoder().encode(d); // httpbin raw
-      return null;
+    // Reconstruct the echoed body + the request framing the origin observed,
+    // across echo shapes.
+    const b64ToBytes = (b64) => {
+      const s = atob(b64); const u = new Uint8Array(s.length);
+      for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+      return u;
     };
-    const got = extract(j?.data);
+    let got = null, chunkedReported = false, chunked = null, cl = null;
+    if (j && j.echo === "tor-js-stream-echo") {
+      // our echo (echo-server.mjs): reports the framing it received
+      got = b64ToBytes(j.bodyBase64 || "");
+      chunkedReported = true;
+      chunked = !!j.chunked;
+      cl = j.contentLength ?? null;
+    } else {
+      // public echoes: body in .data (postman Buffer / httpbin string / httpbingo data-uri)
+      const d = j?.data;
+      if (d && typeof d === "object" && d.type === "Buffer" && Array.isArray(d.data)) got = new Uint8Array(d.data);
+      else if (typeof d === "string" && d.startsWith("data:")) got = b64ToBytes(d.split(",", 2)[1]);
+      else if (typeof d === "string") got = new TextEncoder().encode(d);
+      const h = j?.headers || {};
+      const te = h["transfer-encoding"] || h["Transfer-Encoding"] || null;
+      cl = h["content-length"] || h["Content-Length"] || null;
+      chunkedReported = te != null;
+      chunked = te ? te.toLowerCase().includes("chunked") : null;
+    }
 
     let ok = false, mismatchAt = -1;
     if (got && got.length === sent.length) {
       ok = true;
       for (let i = 0; i < sent.length; i++) if (got[i] !== sent[i]) { ok = false; mismatchAt = i; break; }
     }
-    // Best-effort: what framing did the echo see? (Some strip it after decoding.)
-    const hdrs = j?.headers || {};
-    const te = hdrs["transfer-encoding"] || hdrs["Transfer-Encoding"] || null;
-    const cl = hdrs["content-length"] || hdrs["Content-Length"] || null;
 
     w.close();
-    return { status, ok, sentLen: sent.length, gotLen: got ? got.length : -1, mismatchAt, te, cl };
+    return { status, ok, sentLen: sent.length, gotLen: got ? got.length : -1, mismatchAt, chunkedReported, chunked, cl };
   }, { addr: WORKER_ADDR, gateways: [GATEWAY], echo: ECHO, ethCallMap });
 
   console.log(
     `HTTP ${result.status}; sent ${result.sentLen}B, echoed ${result.gotLen}B; ` +
-    `request framing seen by echo: transfer-encoding=${result.te} content-length=${result.cl}`,
+    `request framing seen by echo: chunked=${result.chunked} content-length=${result.cl}`,
   );
   check("streaming POST returned HTTP 200", result.status === 200, `status=${result.status}`);
   check(
@@ -107,8 +120,20 @@ async function main() {
       ? `length ${result.gotLen} != ${result.sentLen}`
       : `first mismatch at byte ${result.mismatchAt}`,
   );
+  if (result.chunkedReported) {
+    // The echo reports the framing it received (echo-server.mjs) — prove the
+    // length-unknown ReadableStream went out as Transfer-Encoding: chunked, not
+    // buffered into a Content-Length.
+    check(
+      "origin received Transfer-Encoding: chunked (no Content-Length)",
+      result.chunked === true && !result.cl,
+      `chunked=${result.chunked} content-length=${result.cl}`,
+    );
+  } else {
+    console.log("  (this echo doesn't report request framing; the round-trip of a length-unknown stream is the evidence)");
+  }
 
-  console.log("\n✅ streaming request body round-tripped through Tor (chunked encoding verified)");
+  console.log("\n✅ streaming request body verified through Tor");
   cleanup();
   process.exit(0);
 }
