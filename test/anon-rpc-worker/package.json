@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test:e2e": "node run-e2e.mjs",
-    "test:hermetic": "node hermetic.mjs"
+    "test:hermetic": "node hermetic.mjs",
+    "test:stream-upload": "node run-stream-upload.mjs"
   },
   "devDependencies": {
     "@anon-rpc/browser-harness": "^0.3.0",

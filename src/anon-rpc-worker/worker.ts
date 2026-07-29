@@ -12,7 +12,6 @@ import type {
   AnonRpcWorkerApi,
   AnonFetchResponse,
   AnonRequestInit,
-  ByteBody,
   HeaderList,
   StorageApi,
 } from "./spec-types.js";
@@ -190,34 +189,11 @@ async function toFetchInit(init?: AnonRequestInit): Promise<FetchInit | undefine
     for (const [k, v] of init.headers) h[k] = v;
     out.headers = h;
   }
-  if (init.body !== undefined) {
-    // tor-js's FetchInit takes bytes, not a stream — buffer a streaming body.
-    out.body = init.body instanceof ReadableStream ? await readAll(init.body) : init.body;
-  }
+  // tor-js's fetch accepts bytes or a ReadableStream (streamed as chunked), so
+  // forward the body as-is — a streaming request body is never buffered.
+  if (init.body !== undefined) out.body = init.body;
   if (init.signal) out.signal = init.signal;
   // Note: tor-js's FetchInit has no `redirect`; anon-rpc's is not forwarded.
-  return out;
-}
-
-async function readAll(body: ByteBody): Promise<Uint8Array> {
-  if (body instanceof Uint8Array) return body;
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  const reader = body.getReader();
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    if (value) {
-      chunks.push(value);
-      total += value.byteLength;
-    }
-  }
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    out.set(c, off);
-    off += c.byteLength;
-  }
   return out;
 }
 

@@ -8,10 +8,24 @@
 
 use crate::error::JsTorError;
 use futures::io::{AsyncReadExt, AsyncWriteExt};
+use futures::stream::{Stream, StreamExt};
 use http::Method;
 use std::collections::HashMap;
+use std::pin::Pin;
 use tracing::{debug, info};
 use url::Url;
+
+/// The request body source handed to {@link fetch_headers}.
+pub enum RequestBody {
+    /// No request body.
+    None,
+    /// A fully-materialized body, sent with `Content-Length`.
+    Bytes(Vec<u8>),
+    /// A streaming body, sent with `Transfer-Encoding: chunked`. Boxed-local
+    /// (JS-backed streams are `!Send`; the fetch future runs via `spawn_local`,
+    /// so `Send` is not required). Each item is one body chunk.
+    Stream(Pin<Box<dyn Stream<Item = Result<Vec<u8>, JsTorError>>>>),
+}
 
 /// Get navigator.userAgent if available (returns None in Node.js/Deno).
 fn get_navigator_user_agent() -> Option<String> {
@@ -299,11 +313,11 @@ impl BodyReader {
 }
 
 /// Build an HTTP/1.1 request as raw bytes
-pub fn build_http_request(
+pub fn build_request_head(
     url: &Url,
     method: &Method,
     headers: &HashMap<String, String>,
-    body: Option<&[u8]>,
+    body: &RequestBody,
 ) -> Result<Vec<u8>, JsTorError> {
     let host = url.host_str().unwrap_or("localhost");
     let path = if url.path().is_empty() {
@@ -356,32 +370,77 @@ pub fn build_http_request(
             }
             continue;
         }
-        if lower == "content-length" {
-            let expected = body.map(|b| b.len().to_string()).unwrap_or_default();
-            if *value != expected {
-                tracing::warn!("Ignoring caller's Content-Length '{}' (using '{}')", value, expected);
-            }
+        if lower == "content-length" || lower == "transfer-encoding" {
+            // We set framing (Content-Length or chunked) ourselves from the body.
             continue;
         }
         request.push_str(&format!("{}: {}\r\n", key, value));
     }
 
-    // Add content-length for requests with body
-    if let Some(body) = body {
-        request.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    // Framing: Content-Length for a known body, chunked for a stream.
+    match body {
+        RequestBody::Bytes(b) => request.push_str(&format!("Content-Length: {}\r\n", b.len())),
+        RequestBody::Stream(_) => request.push_str("Transfer-Encoding: chunked\r\n"),
+        RequestBody::None => {}
     }
 
-    // End headers
+    // End headers; the body (if any) is written separately by write_request.
     request.push_str("\r\n");
+    Ok(request.into_bytes())
+}
 
-    let mut bytes = request.into_bytes();
+/// Write the request head, then the body — raw bytes for `Bytes`, or
+/// `Transfer-Encoding: chunked` frames for `Stream` — then flush. Streaming a
+/// chunk at a time keeps backpressure on the Tor stream, so a large upload is
+/// never fully buffered in memory.
+async fn write_request<S>(stream: &mut S, head: &[u8], body: RequestBody) -> Result<(), JsTorError>
+where
+    S: futures::io::AsyncWrite + Unpin,
+{
+    stream
+        .write_all(head)
+        .await
+        .map_err(|e| JsTorError::http_request(format!("Failed to write request head: {}", e)))?;
 
-    // Add body if present
-    if let Some(body) = body {
-        bytes.extend_from_slice(body);
+    match body {
+        RequestBody::None => {}
+        RequestBody::Bytes(b) => {
+            stream
+                .write_all(&b)
+                .await
+                .map_err(|e| JsTorError::http_request(format!("Failed to write request body: {}", e)))?;
+        }
+        RequestBody::Stream(mut s) => {
+            while let Some(chunk) = s.next().await {
+                let chunk = chunk?;
+                if chunk.is_empty() {
+                    continue; // a zero-length chunk would prematurely terminate the body
+                }
+                stream
+                    .write_all(format!("{:x}\r\n", chunk.len()).as_bytes())
+                    .await
+                    .map_err(|e| JsTorError::http_request(format!("Failed to write chunk size: {}", e)))?;
+                stream
+                    .write_all(&chunk)
+                    .await
+                    .map_err(|e| JsTorError::http_request(format!("Failed to write chunk: {}", e)))?;
+                stream
+                    .write_all(b"\r\n")
+                    .await
+                    .map_err(|e| JsTorError::http_request(format!("Failed to write chunk CRLF: {}", e)))?;
+            }
+            stream
+                .write_all(b"0\r\n\r\n")
+                .await
+                .map_err(|e| JsTorError::http_request(format!("Failed to write final chunk: {}", e)))?;
+        }
     }
 
-    Ok(bytes)
+    stream
+        .flush()
+        .await
+        .map_err(|e| JsTorError::http_request(format!("Failed to flush request: {}", e)))?;
+    Ok(())
 }
 
 /// Write the HTTP request and read response headers.
@@ -389,24 +448,13 @@ pub fn build_http_request(
 /// Returns the parsed status/headers, the body framing mode, and any overflow
 /// bytes read past the `\r\n\r\n` header separator. The stream is borrowed
 /// mutably so the caller retains ownership for body reading.
-async fn send_request_and_read_headers<S>(
+async fn read_response_headers<S>(
     stream: &mut S,
-    request_bytes: &[u8],
     method: &Method,
 ) -> Result<(u16, Vec<(String, String)>, BodyFraming, Vec<u8>), JsTorError>
 where
-    S: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin,
+    S: futures::io::AsyncRead + Unpin,
 {
-    // Write the request
-    stream
-        .write_all(request_bytes)
-        .await
-        .map_err(|e| JsTorError::http_request(format!("Failed to write request: {}", e)))?;
-    stream
-        .flush()
-        .await
-        .map_err(|e| JsTorError::http_request(format!("Failed to flush request: {}", e)))?;
-
     // Read response headers, skipping 1xx interim responses (except 101).
     let mut header_buf = Vec::new();
     let status: u16;
@@ -541,7 +589,7 @@ pub async fn fetch_headers<S>(
     url: &Url,
     method: Method,
     headers: HashMap<String, String>,
-    body: Option<Vec<u8>>,
+    body: RequestBody,
     is_https: bool,
     host: &str,
     tls_config: Option<std::sync::Arc<futures_rustls::rustls::ClientConfig>>,
@@ -549,8 +597,8 @@ pub async fn fetch_headers<S>(
 where
     S: futures::io::AsyncRead + futures::io::AsyncWrite + Unpin + 'static,
 {
-    let request_bytes = build_http_request(url, &method, &headers, body.as_deref())?;
-    debug!("Sending {} bytes of HTTP request", request_bytes.len());
+    let head = build_request_head(url, &method, &headers, &body)?;
+    debug!("Sending {}-byte request head", head.len());
 
     if is_https {
         let tls_config = tls_config.ok_or_else(|| {
@@ -569,8 +617,9 @@ where
             })?;
         info!("TLS connection established with {}", host);
 
+        write_request(&mut tls_stream, &head, body).await?;
         let (status, resp_headers, framing, overflow) =
-            send_request_and_read_headers(&mut tls_stream, &request_bytes, &method).await?;
+            read_response_headers(&mut tls_stream, &method).await?;
 
         info!("Received response headers: status={}", status);
 
@@ -583,8 +632,9 @@ where
     } else {
         let mut stream = stream;
 
+        write_request(&mut stream, &head, body).await?;
         let (status, resp_headers, framing, overflow) =
-            send_request_and_read_headers(&mut stream, &request_bytes, &method).await?;
+            read_response_headers(&mut stream, &method).await?;
 
         info!("Received response headers: status={}", status);
 

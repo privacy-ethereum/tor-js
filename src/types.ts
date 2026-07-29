@@ -49,6 +49,6 @@ export type { TorStorage } from '#wasm';
 export interface FetchInit {
   method?: string;
   headers?: Record<string, string>;
-  body?: string | Uint8Array | ArrayBuffer;
+  body?: string | Uint8Array | ArrayBuffer | ReadableStream<Uint8Array>;
   signal?: AbortSignal;
 }

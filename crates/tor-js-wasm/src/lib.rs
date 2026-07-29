@@ -467,8 +467,8 @@ fn make_tls_config() -> Arc<futures_rustls::rustls::ClientConfig> {
 struct FetchInit {
     method: Option<String>,
     headers: Option<HashMap<String, String>>,
-    #[serde(skip)]
-    body: Option<Vec<u8>>,
+    // `body` is a JS object (bytes or a ReadableStream), not serde-decodable —
+    // extracted separately via extract_body_from_js.
 }
 
 /// Perform a fetch request, returning a real browser `Response` object.
@@ -487,17 +487,19 @@ async fn fetch_impl(
         .map_err(|e| JsTorError::new("INVALID_URL", "validation", e.to_string(), false).into_js_value())?;
 
     // Parse fetch options
-    let mut fetch_init: FetchInit = if init.is_undefined() || init.is_null() {
+    let fetch_init: FetchInit = if init.is_undefined() || init.is_null() {
         FetchInit::default()
     } else {
         serde_wasm_bindgen::from_value(init.clone())
             .map_err(|e| JsTorError::new("INVALID_OPTIONS", "validation", e.to_string(), false).into_js_value())?
     };
 
-    // Extract body and signal separately (JS objects; not handled by serde)
-    if !init.is_undefined() && !init.is_null() {
-        fetch_init.body = extract_body_from_js(&init)?;
-    }
+    // Extract body and signal separately (JS objects; not handled by serde).
+    let request_body = if init.is_undefined() || init.is_null() {
+        fetch::RequestBody::None
+    } else {
+        extract_body_from_js(&init)?
+    };
     let signal = extract_signal_from_js(&init)?;
 
     // Parse method (normalize to uppercase per Fetch spec)
@@ -522,7 +524,6 @@ async fn fetch_impl(
     };
 
     let headers = fetch_init.headers.unwrap_or_default();
-    let body = fetch_init.body;
 
     // Get host and port
     let host = url
@@ -551,7 +552,7 @@ async fn fetch_impl(
     debug!("Connected, making HTTP request...");
 
     // Perform the HTTP request — resolves as soon as headers arrive
-    let result = fetch::fetch_headers(stream, &url, method, headers, body, is_https, host, Some(tls_config))
+    let result = fetch::fetch_headers(stream, &url, method, headers, request_body, is_https, host, Some(tls_config))
         .await
         .map_err(|e| e.into_js_value())?;
 
@@ -599,34 +600,55 @@ async fn fetch_impl(
 }
 
 /// Extract body from JavaScript FetchInit object
-fn extract_body_from_js(init: &JsValue) -> Result<Option<Vec<u8>>, JsValue> {
+fn extract_body_from_js(init: &JsValue) -> Result<fetch::RequestBody, JsValue> {
     let body = js_sys::Reflect::get(init, &JsValue::from_str("body"))
         .map_err(|e| JsTorError::new("INVALID_OPTIONS", "validation", format!("Failed to get body: {:?}", e), false).into_js_value())?;
 
     if body.is_undefined() || body.is_null() {
-        return Ok(None);
+        return Ok(fetch::RequestBody::None);
     }
 
     // Handle string body
     if let Some(s) = body.as_string() {
-        return Ok(Some(s.into_bytes()));
+        return Ok(fetch::RequestBody::Bytes(s.into_bytes()));
     }
 
     // Handle Uint8Array
     if let Ok(arr) = body.clone().dyn_into::<js_sys::Uint8Array>() {
-        return Ok(Some(arr.to_vec()));
+        return Ok(fetch::RequestBody::Bytes(arr.to_vec()));
     }
 
     // Handle ArrayBuffer
     if let Ok(buf) = body.clone().dyn_into::<js_sys::ArrayBuffer>() {
         let arr = js_sys::Uint8Array::new(&buf);
-        return Ok(Some(arr.to_vec()));
+        return Ok(fetch::RequestBody::Bytes(arr.to_vec()));
+    }
+
+    // Handle a ReadableStream<Uint8Array> — streamed with chunked encoding, so
+    // a large upload isn't buffered. Backpressure rides the underlying stream.
+    if let Ok(rs) = body.clone().dyn_into::<web_sys::ReadableStream>() {
+        use futures::StreamExt;
+        let chunks = wasm_streams::ReadableStream::from_raw(rs)
+            .into_stream()
+            .map(|item| match item {
+                Ok(chunk) => chunk
+                    .dyn_into::<js_sys::Uint8Array>()
+                    .map(|a| a.to_vec())
+                    .map_err(|_| JsTorError::http_request(
+                        "request body stream must yield Uint8Array chunks",
+                    )),
+                Err(e) => Err(JsTorError::http_request(format!(
+                    "request body stream error: {:?}",
+                    e
+                ))),
+            });
+        return Ok(fetch::RequestBody::Stream(Box::pin(chunks)));
     }
 
     Err(JsTorError::new(
         "INVALID_BODY",
         "validation",
-        "Body must be a string, Uint8Array, or ArrayBuffer",
+        "Body must be a string, Uint8Array, ArrayBuffer, or ReadableStream",
         false,
     )
     .into_js_value())
@@ -755,7 +777,7 @@ export interface TorStorage {
 export interface FetchInit {
     method?: string;
     headers?: Record<string, string>;
-    body?: string | Uint8Array | ArrayBuffer;
+    body?: string | Uint8Array | ArrayBuffer | ReadableStream<Uint8Array>;
     signal?: AbortSignal;
 }
 
