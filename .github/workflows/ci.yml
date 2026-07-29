@@ -64,6 +64,11 @@ jobs:
       - name: Build WASM + TS wrapper
         run: npm run build
 
+      # Gateway selection (shuffle, least-outstanding, cooldown, deadlines,
+      # bootstrap failover) against a fake KPS dialer — no network.
+      - name: Unit tests
+        run: npm run test:unit
+
       # anon-rpc worker (dist/anon-rpc-worker.js is produced by the build above):
       # assert the shipped bundle is clean, then run the offline harness test.
       # The real Tor fetch (test:e2e) is intentionally NOT in CI — it needs live

@@ -10,7 +10,7 @@
  * bidirectional byte pipe regardless of transport.
  */
 
-import { KpsGateway } from './kpsGateway.js';
+import { KpsGateway, type GatewayResponse } from './kpsGateway.js';
 import type { DialFn } from './kpsDial.js';
 
 // ---------------------------------------------------------------------------
@@ -25,6 +25,55 @@ function defaultStrategies(hasGateway: boolean): string[] {
   if (HAS_DENO || HAS_NODE) s.push('direct');
   if (hasGateway) s.push('kps');
   return s;
+}
+
+// ---------------------------------------------------------------------------
+// Gateway selection
+// ---------------------------------------------------------------------------
+
+/** How many gateways carry traffic concurrently (the "preferred set"). */
+const PREFERRED_GATEWAYS = 2;
+
+/** Per-attempt deadline and post-failure cooldown, in ms. */
+export interface GatewayTiming {
+  /** Budget for one gateway attempt: dial + open stream + response head. */
+  attemptTimeoutMs: number;
+  /** Cooldown after a first failure; doubles per consecutive failure. */
+  cooldownBaseMs: number;
+  /** Ceiling on the cooldown. */
+  cooldownMaxMs: number;
+}
+
+const DEFAULT_TIMING: GatewayTiming = {
+  attemptTimeoutMs: 15_000,
+  cooldownBaseMs: 2_000,
+  cooldownMaxMs: 60_000,
+};
+
+/** Liveness and load bookkeeping for one configured gateway. */
+interface GatewayState {
+  gw: KpsGateway;
+  /** Open tunnels (and in-progress attempts) carried by this gateway. */
+  inFlight: number;
+  /** Consecutive failures; drives the cooldown length. */
+  failures: number;
+  /** Epoch ms before which this gateway is passed over. */
+  notBefore: number;
+}
+
+/**
+ * Fisher-Yates. The gateway list is an unordered set, so each client picks its
+ * own preference order at construction: no address is privileged by its
+ * position in config, and independent clients spread across an operator's
+ * gateways instead of all piling onto the first one.
+ */
+function shuffled<T>(items: T[]): T[] {
+  const out = items.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,11 +181,14 @@ export class ArtiSocket {
 export interface ArtiSocketProviderOptions {
   /**
    * Gateway KPS address(es) (`ip:port:certhash`, e.g.
-   * `"198.51.100.7:12298:uEiAxk...9Qw"`). Pass an array of redundant gateways
-   * to fail over between them (each relay connection sticks to the last one
-   * that worked). Required in browsers for relay connections. Optional in
-   * Node.js/Deno (enables fast bootstrap and gateway fallback when provided;
-   * requires the optional `@kpstreams/quic-client` package).
+   * `"198.51.100.7:12298:uEiAxk...9Qw"`). Pass several redundant gateways to
+   * fail over and spread load between them.
+   *
+   * The list is an **unordered set**: position carries no priority, and each
+   * client shuffles it to pick its own preference. (Explicit priorities or
+   * weights may be added later.) Required in browsers for relay connections.
+   * Optional in Node.js/Deno (enables fast bootstrap and gateway fallback when
+   * provided; requires the optional `@kpstreams/quic-client` package).
    */
   gateway?: string | string[];
 
@@ -152,6 +204,12 @@ export interface ArtiSocketProviderOptions {
    * Defaults based on environment and whether a gateway address is provided.
    */
   strategies?: string[];
+
+  /**
+   * Override the per-attempt deadline and failure cooldown. Advanced; mainly
+   * useful for tests that need short timings.
+   */
+  timing?: Partial<GatewayTiming>;
 }
 
 /**
@@ -163,35 +221,82 @@ export interface ArtiSocketProviderOptions {
  * strategy becomes available (the only option in browsers).
  */
 export class ArtiSocketProvider {
-  #gateways: KpsGateway[] = [];
-  /** Index of the gateway that last connected — tried first next time. */
-  #primaryIdx = 0;
+  #states: GatewayState[] = [];
   #strategies: string[];
+  #timing: GatewayTiming;
 
   constructor(options: ArtiSocketProviderOptions = {}) {
     const addresses =
       options.gateway == null ? []
       : Array.isArray(options.gateway) ? options.gateway
       : [options.gateway];
-    for (const address of addresses) {
+    for (const address of shuffled(addresses)) {
       if (/^(https?|wss?):\/\//.test(address)) {
         throw new Error(
           `gateway is now a KPS address ("ip:port:certhash"), not a URL — got "${address}". ` +
           'Gateways expose their address at startup and in /metadata.json.',
         );
       }
-      this.#gateways.push(new KpsGateway(address, { dial: options.dial }));
+      this.#states.push({
+        gw: new KpsGateway(address, { dial: options.dial }),
+        inFlight: 0,
+        failures: 0,
+        notBefore: 0,
+      });
     }
-    this.#strategies = options.strategies ?? defaultStrategies(this.#gateways.length > 0);
+    this.#strategies = options.strategies ?? defaultStrategies(this.#states.length > 0);
+    this.#timing = { ...DEFAULT_TIMING, ...options.timing };
   }
 
   /**
-   * The KPS gateway client used for fast bootstrap, when configured. With
-   * multiple gateways this is the one that last connected a relay (or the
-   * first, before any connection).
+   * The gateway currently preferred for single-gateway work, or null if none is
+   * configured. Prefer {@link gatewayFetch} for requests — it falls over.
    */
   get gateway(): KpsGateway | null {
-    return this.#gateways[this.#primaryIdx] ?? this.#gateways[0] ?? null;
+    return this.#candidates()[0]?.gw ?? null;
+  }
+
+  /**
+   * Gateways in the order to try them for one operation; the first is the pick,
+   * the rest are fallbacks.
+   *
+   * Least-outstanding decides between members of the preferred set, and is the
+   * whole latency story here: a slow or stalled gateway accumulates in-flight
+   * work and stops being chosen, with no probing or RTT bookkeeping. Because
+   * the sort is stable, equal load keeps the construction-time shuffle — so a
+   * client whose tunnels don't overlap reuses one gateway (and fast bootstrap
+   * contacts exactly one), while concurrent load spreads across the set.
+   */
+  #candidates(): GatewayState[] {
+    const now = Date.now();
+    const ready = this.#states.filter((s) => s.notBefore <= now);
+    // Membership of the preferred set is by shuffle order, so it's stable and
+    // only shifts when a member starts cooling down — that keeps a large
+    // configured list from fanning traffic out to every gateway at once.
+    // Within the set, least-outstanding picks the winner.
+    const preferred = ready
+      .slice(0, PREFERRED_GATEWAYS)
+      .sort((a, b) => a.inFlight - b.inFlight);
+    const rest = ready.slice(PREFERRED_GATEWAYS);
+    // Cooling-down gateways stay as a last resort, soonest-ready first: better
+    // to attempt a recently-failed gateway than to fail without trying any.
+    const cooling = this.#states
+      .filter((s) => s.notBefore > now)
+      .sort((a, b) => a.notBefore - b.notBefore);
+    return [...preferred, ...rest, ...cooling];
+  }
+
+  #onSuccess(s: GatewayState): void {
+    s.failures = 0;
+    s.notBefore = 0;
+  }
+
+  /** Cool a failed gateway off for min(base·2^(n-1), max), 50-100% jittered. */
+  #onFailure(s: GatewayState): void {
+    s.failures += 1;
+    const { cooldownBaseMs, cooldownMaxMs } = this.#timing;
+    const exp = Math.min(cooldownMaxMs, cooldownBaseMs * 2 ** (s.failures - 1));
+    s.notBefore = Date.now() + Math.round(exp * (0.5 + Math.random() * 0.5));
   }
 
   /**
@@ -221,7 +326,7 @@ export class ArtiSocketProvider {
 
   /** Close all KPS gateway connections and release resources. */
   close(): void {
-    for (const gw of this.#gateways) gw.close();
+    for (const s of this.#states) s.gw.close();
   }
 
   // -- Direct TCP strategy (Node.js / Deno) ---------------------------------
@@ -251,26 +356,55 @@ export class ArtiSocketProvider {
   // -- KPS gateway strategy -------------------------------------------------
 
   async #connectKps(target: string): Promise<ArtiSocket> {
-    const gateways = this.#gateways;
-    if (!gateways.length) throw new Error('kps strategy requires a gateway address');
-    if (gateways.length === 1) return gateways[0].connect(target);
+    if (!this.#states.length) throw new Error('kps strategy requires a gateway address');
 
-    // Try each gateway starting from the last-good one, sticking to whichever
-    // connects so subsequent tunnels (and fast bootstrap) reuse it.
-    // TODO(#9): gateway choice is analogous to Tor entry-guard selection
-    // (each gateway observes all relay connections); consider a persistent,
-    // rotation-reluctant guard-set approach rather than plain sticky failover.
+    // Every candidate is tried for the SAME target: gateway failure must never
+    // change which relay we connect to, or a hostile gateway could steer relay
+    // (guard) selection by selectively refusing CONNECTs.
+    // TODO(#9): richer selection — measured latency, explicit priority/weights,
+    // and persistent guard-set semantics — is still open.
     const errors: string[] = [];
-    for (let k = 0; k < gateways.length; k++) {
-      const idx = (this.#primaryIdx + k) % gateways.length;
+    for (const s of this.#candidates()) {
+      s.inFlight += 1;
       try {
-        const sock = await gateways[idx].connect(target);
-        this.#primaryIdx = idx;
+        const sock = await s.gw.connect(target, {
+          signal: AbortSignal.timeout(this.#timing.attemptTimeoutMs),
+        });
+        this.#onSuccess(s);
+        // Hold the count for the tunnel's lifetime, not just the handshake, so
+        // a gateway carrying many live tunnels reads as busy.
+        const release = () => { s.inFlight -= 1; };
+        sock.closed.then(release, release);
         return sock;
       } catch (e: any) {
-        errors.push(`${gateways[idx].address}: ${e.message}`);
+        s.inFlight -= 1;
+        this.#onFailure(s);
+        errors.push(`${s.gw.address}: ${e.message}`);
       }
     }
-    throw new Error(`all gateways failed: ${errors.join('; ')}`);
+    throw new Error(`all gateways failed for ${target}: ${errors.join('; ')}`);
+  }
+
+  /**
+   * One KPS-HTTP/1 GET against a gateway (used for fast bootstrap), falling
+   * over to the next candidate on failure. The happy path contacts exactly one
+   * gateway — bootstrap is not raced.
+   */
+  async gatewayFetch(path: string): Promise<GatewayResponse> {
+    if (!this.#states.length) throw new Error('no gateway configured');
+    const errors: string[] = [];
+    for (const s of this.#candidates()) {
+      try {
+        const res = await s.gw.fetch(path, {
+          signal: AbortSignal.timeout(this.#timing.attemptTimeoutMs),
+        });
+        this.#onSuccess(s);
+        return res;
+      } catch (e: any) {
+        this.#onFailure(s);
+        errors.push(`${s.gw.address}: ${e.message}`);
+      }
+    }
+    throw new Error(`all gateways failed for ${path}: ${errors.join('; ')}`);
   }
 }

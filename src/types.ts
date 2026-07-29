@@ -16,8 +16,10 @@ export type TorClientOptions = {
   /**
    * Gateway KPS address(es) (`ip:port:certhash`, e.g.
    * `"198.51.100.7:12298:uEiAxk...9Qw"` — printed by tor-js-gateway at
-   * startup). Pass an array of redundant gateways to fail over between them.
-   * Required in browsers for relay connections; optional in Node.js/Deno.
+   * startup). Pass several redundant gateways to fail over and spread load
+   * between them; the list is an unordered set, so position implies no
+   * priority. Required in browsers for relay connections; optional in
+   * Node.js/Deno.
    */
   gateway?: string | string[];
 

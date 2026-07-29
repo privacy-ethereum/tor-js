@@ -63,11 +63,13 @@ export class TorClient {
 
     // Auto-attempt fast bootstrap from gateway — only when one is configured.
     // The archive is zstd-compressed; the WASM side decompresses it.
-    const gw = sp.gateway;
-    if (gw) {
+    // Go through the provider rather than capturing a gateway: it picks per
+    // attempt (one gateway on the happy path) and falls over if that one is
+    // down, instead of silently degrading to slow bootstrap.
+    if (sp.gateway) {
       wasmOptions = wasmOptions.withFastBootstrap(async (): Promise<Uint8Array> => {
         this.log.info('Fast bootstrap: fetching bootstrap.zip.zst...');
-        const res = await gw.fetch('/bootstrap.zip.zst');
+        const res = await sp.gatewayFetch('/bootstrap.zip.zst');
         if (res.status !== 200) {
           throw new Error(`Fast bootstrap fetch failed: ${res.status} ${res.statusText}`);
         }

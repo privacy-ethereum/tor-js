@@ -54,7 +54,8 @@
     "build:ts": "node build.mjs",
     "prepublishOnly": "npm run build",
     "clean": "rm -rf dist crates/tor-js-wasm/pkg target",
-    "website": "npm --prefix website run dev"
+    "website": "npm --prefix website run dev",
+    "test:unit": "node --test \"test/unit/*.test.mjs\""
   },
   "author": "Andrew Morris",
   "license": "MIT OR Apache-2.0",

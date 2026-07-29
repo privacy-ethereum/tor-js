@@ -25,6 +25,21 @@ const dec = new TextDecoder();
  * connection dies mid-open (kps ISSUES #14), so always bound it. */
 const OPEN_STREAM_TIMEOUT_MS = 20_000;
 
+/**
+ * Reject as soon as `signal` aborts, without disturbing `p` itself. Used to
+ * bound one caller's wait on a shared dial: the dial keeps running, so a
+ * connection that lands late is still stored and reused rather than leaked.
+ */
+function abortRace<T>(p: Promise<T>, signal: AbortSignal | undefined, what: string): Promise<T> {
+  if (!signal) return p;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error(`${what}: timed out`));
+    if (signal.aborted) return onAbort();
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
 interface ResponseHead {
   status: number;
   statusText: string;
@@ -139,8 +154,8 @@ export class KpsGateway {
     return this.#address;
   }
 
-  /** Dial (or reuse) the KPS connection. */
-  async #connection(): Promise<Connection> {
+  /** Dial (or reuse) the KPS connection, optionally bounding this caller's wait. */
+  async #connection(signal?: AbortSignal): Promise<Connection> {
     if (this.#closed) throw new Error('KpsGateway is closed');
     if (!this.#connPromise) {
       // Resolve the dialer inside the promise chain — lazy-importing the
@@ -171,7 +186,7 @@ export class KpsGateway {
       );
       this.#connPromise = p;
     }
-    return this.#connPromise;
+    return abortRace(this.#connPromise, signal, `dial ${this.#address}`);
   }
 
   #addTeardown(conn: Connection, fn: () => void): () => void {
@@ -185,8 +200,8 @@ export class KpsGateway {
     return () => set.delete(fn);
   }
 
-  async #openStream(conn: Connection): Promise<Stream> {
-    return conn.openStream({ signal: AbortSignal.timeout(OPEN_STREAM_TIMEOUT_MS) });
+  async #openStream(conn: Connection, signal?: AbortSignal): Promise<Stream> {
+    return conn.openStream({ signal: signal ?? AbortSignal.timeout(OPEN_STREAM_TIMEOUT_MS) });
   }
 
   /**
@@ -194,10 +209,12 @@ export class KpsGateway {
    * then read the response; the body ends at EOF.
    *
    * @param path Absolute request path (e.g. "/bootstrap.zip.zst").
+   * @param opts Optional `signal` bounding the whole exchange.
    */
-  async fetch(path: string): Promise<GatewayResponse> {
-    const conn = await this.#connection();
-    const stream = await this.#openStream(conn);
+  async fetch(path: string, opts: { signal?: AbortSignal } = {}): Promise<GatewayResponse> {
+    const { signal } = opts;
+    const conn = await this.#connection(signal);
+    const stream = await this.#openStream(conn, signal);
     const reader = stream.readable.getReader();
     const removeTeardown = this.#addTeardown(conn, () => {
       reader.cancel(new Error('kps connection closed')).catch(() => {});
@@ -209,7 +226,11 @@ export class KpsGateway {
       await writer.write(enc.encode(`GET ${path} HTTP/1.1\r\nHost: ${this.#certhash}\r\n\r\n`));
       await writer.close(); // FIN — delimits the (empty) request body
 
-      const { status, statusText, headers, extra } = await readHead(reader);
+      // Only the head is deadlined, not the body: a bootstrap snapshot is
+      // megabytes and a slow link must not be mistaken for a dead gateway.
+      const { status, statusText, headers, extra } = await abortRace(
+        readHead(reader), signal, `GET ${path}`,
+      );
       const chunks: Uint8Array[] = [];
       let length = 0;
       if (extra.length) {
@@ -236,10 +257,13 @@ export class KpsGateway {
    * the gateway's 200 the stream is the raw byte pipe to the target.
    *
    * @param target Relay address as "ip:port" (consensus relays only).
+   * @param opts Optional `signal` bounding setup (dial, stream, CONNECT reply);
+   *   it does not affect the tunnel once established.
    */
-  async connect(target: string): Promise<ArtiSocket> {
-    const conn = await this.#connection();
-    const stream = await this.#openStream(conn);
+  async connect(target: string, opts: { signal?: AbortSignal } = {}): Promise<ArtiSocket> {
+    const { signal } = opts;
+    const conn = await this.#connection(signal);
+    const stream = await this.#openStream(conn, signal);
     const reader = stream.readable.getReader();
     const writer = stream.writable.getWriter();
     // No FIN here — the write half stays open for tunnel bytes.
@@ -247,7 +271,7 @@ export class KpsGateway {
 
     let head: ResponseHead;
     try {
-      head = await readHead(reader);
+      head = await abortRace(readHead(reader), signal, `CONNECT ${target}`);
     } catch (e) {
       stream.close().catch(() => {});
       throw e;
