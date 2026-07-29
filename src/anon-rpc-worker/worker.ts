@@ -29,12 +29,21 @@ declare const anonRpcWorker: AnonRpcWorkerApi;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-// Delay between bootstrap retries. Bootstrap is retried indefinitely (the Tor
-// way): a down/unreachable gateway is transient, so we keep trying rather than
-// permanently failing readiness.
-const BOOTSTRAP_RETRY_MS = 5_000;
+// Exponential backoff for bootstrap retries. Bootstrap is retried indefinitely
+// (the Tor way): a down/unreachable gateway is transient, so we keep trying
+// rather than permanently failing readiness — but back off, capped and
+// jittered, so a persistently-down gateway isn't hammered.
+const BOOTSTRAP_RETRY_BASE_MS = 1_000;
+const BOOTSTRAP_RETRY_MAX_MS = 60_000;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// min(base·2^(attempt-1), max), then 50–100% jitter to avoid synchronized
+// retries across many workers.
+function bootstrapBackoff(attempt: number): number {
+  const exp = Math.min(BOOTSTRAP_RETRY_MAX_MS, BOOTSTRAP_RETRY_BASE_MS * 2 ** (attempt - 1));
+  return Math.round(exp * (0.5 + Math.random() * 0.5));
+}
 
 // --- Transport: bridge the host's KPS capability into tor-js's `dial` seam ---
 // anon-rpc's KpsConn/KpsStream are structurally the subset of @kpstreams/core's
@@ -132,8 +141,9 @@ function resolveGateways(config: unknown): string[] {
       await client.ready();
       break;
     } catch (e) {
-      log.warn(`tor-js worker: bootstrap attempt ${attempt} failed; retrying in ${BOOTSTRAP_RETRY_MS / 1000}s:`, errMsg(e));
-      await sleep(BOOTSTRAP_RETRY_MS);
+      const delay = bootstrapBackoff(attempt);
+      log.warn(`tor-js worker: bootstrap attempt ${attempt} failed; retrying in ${(delay / 1000).toFixed(1)}s:`, errMsg(e));
+      await sleep(delay);
     }
   }
   log.info("tor-js worker: Tor ready");
