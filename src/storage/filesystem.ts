@@ -8,8 +8,11 @@ function isNodeError(err: unknown): err is NodeJS.ErrnoException {
 /**
  * Encode a storage key into a filesystem-safe filename.
  * Alphanumeric characters pass through; everything else becomes _XX_ or _XXXX_.
+ *
+ * Exported for unit tests; not re-exported from `storage/index.ts`, so it is not
+ * part of the package's public API.
  */
-function mangleKey(key: string): string {
+export function mangleKey(key: string): string {
   let result = '';
   for (let i = 0; i < key.length; i++) {
     const code = key.charCodeAt(i);
@@ -30,8 +33,10 @@ function mangleKey(key: string): string {
 
 /**
  * Decode a mangled filename back to the original key.
+ *
+ * Exported for unit tests (see {@link mangleKey}).
  */
-function unmangleKey(filename: string): string {
+export function unmangleKey(filename: string): string {
   let result = '';
   let i = 0;
   while (i < filename.length) {

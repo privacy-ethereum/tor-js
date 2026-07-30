@@ -38,6 +38,10 @@ export class TorClient {
     }
     this.log = (options.log ?? new Log({ rawLog: () => {} }));
     this.clientPromise = this.bootstrap(options);
+    // Bootstrap starts immediately, so a failure has no awaiter until the first
+    // fetch()/ready(). Attach a sink to keep that from surfacing as an unhandled
+    // rejection (fatal in Node); the error still reaches every real awaiter.
+    this.clientPromise.catch(() => {});
   }
 
   private async bootstrap(options: TorClientOptions): Promise<WasmTorClient> {
@@ -119,7 +123,12 @@ export class TorClient {
     })();
 
     this.readyPromise = p;
-    p.finally(() => { this.readyPromise = null; });
+    // Clear the cache on settle via `then` with both handlers rather than
+    // `finally`: `finally` returns a derived promise that would also reject, and
+    // nothing awaits *that*, so a failed bootstrap became an unhandled rejection
+    // on top of the error the caller already received.
+    const clear = () => { this.readyPromise = null; };
+    p.then(clear, clear);
     return p;
   }
 
