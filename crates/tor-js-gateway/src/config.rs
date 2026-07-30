@@ -80,6 +80,19 @@ impl Default for Config {
 }
 
 impl Config {
+    /// The tunnel limits this config asks for. `tunnel_per_ip` deliberately
+    /// caps both the per-IP and the per-KPS-connection budget, so one client
+    /// cannot multiply its allowance by opening more connections.
+    pub fn tunnel_limits(&self) -> crate::tunnel::TunnelLimits {
+        crate::tunnel::TunnelLimits {
+            max_tunnels: self.tunnel_max,
+            per_ip: self.tunnel_per_ip,
+            per_conn: self.tunnel_per_ip,
+            idle_timeout: std::time::Duration::from_secs(self.tunnel_idle_timeout),
+            max_lifetime: std::time::Duration::from_secs(self.tunnel_max_lifetime),
+        }
+    }
+
     /// Serialize to pretty JSON5 with comments.
     pub fn to_json5_with_comments() -> String {
         let cfg = Self::default();
@@ -151,5 +164,121 @@ impl Config {
             .with_context(|| format!("writing {}", path.display()))?;
         println!("Created config at {}", path.display());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::TempDir;
+
+    fn as_value(cfg: &Config) -> serde_json::Value {
+        serde_json::to_value(cfg).unwrap()
+    }
+
+    /// The commented template is hand-written, so it can drift from the struct.
+    /// `deny_unknown_fields` turns either direction of drift into a parse error:
+    /// a field added to the struct but not the template is "missing field", and
+    /// one removed from the struct but left in the template is "unknown field".
+    #[test]
+    fn the_commented_template_parses_back_to_the_defaults() {
+        let text = Config::to_json5_with_comments();
+        let parsed: Config = json5::from_str(&text)
+            .unwrap_or_else(|e| panic!("template does not match Config: {e}\n\n{text}"));
+        assert_eq!(as_value(&parsed), as_value(&Config::default()));
+    }
+
+    #[test]
+    fn json5_comments_and_trailing_commas_are_accepted() {
+        // Both appear in the template, so the parser has to tolerate them.
+        let text = r#"{
+  // a comment
+  "data_dir": "/tmp/d",
+  "kps_port": 1234,
+  "kps_key_file": "/tmp/k",
+  "keccak_dir": "",
+  "advertised_addresses": ["1.2.3.4"],
+  "tunnel_max": 10,
+  "tunnel_per_ip": 2,
+  "tunnel_idle_timeout": 30,
+  "tunnel_max_lifetime": 60, /* trailing comma next */
+}"#;
+        let cfg: Config = json5::from_str(text).unwrap();
+        assert_eq!(cfg.kps_port, 1234);
+        assert_eq!(cfg.advertised_addresses, vec!["1.2.3.4".to_string()]);
+    }
+
+    #[test]
+    fn an_unknown_field_is_rejected_rather_than_ignored() {
+        // A typo in a config key must not silently fall back to the default.
+        let text = Config::to_json5_with_comments()
+            .replace("\"kps_port\"", "\"kps_prot\"");
+        let err = json5::from_str::<Config>(&text).unwrap_err();
+        assert!(err.to_string().contains("kps_prot"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn tunnel_limits_cap_per_connection_with_the_per_ip_budget() {
+        let cfg = Config {
+            tunnel_max: 100,
+            tunnel_per_ip: 7,
+            tunnel_idle_timeout: 11,
+            tunnel_max_lifetime: 22,
+            ..Config::default()
+        };
+        let limits = cfg.tunnel_limits();
+        assert_eq!(limits.max_tunnels, 100);
+        assert_eq!(limits.per_ip, 7);
+        assert_eq!(
+            limits.per_conn, 7,
+            "otherwise a client lifts its own cap by opening more connections"
+        );
+        assert_eq!(limits.idle_timeout, std::time::Duration::from_secs(11));
+        assert_eq!(limits.max_lifetime, std::time::Duration::from_secs(22));
+    }
+
+    /// The defaults the struct declares and the ones the template ships must be
+    /// the same numbers an operator sees; this pins them so a change is visible.
+    #[test]
+    fn default_limits_match_the_tunnel_defaults() {
+        let from_config = Config::default().tunnel_limits();
+        let from_tunnel = crate::tunnel::TunnelLimits::default();
+        assert_eq!(from_config.max_tunnels, from_tunnel.max_tunnels);
+        assert_eq!(from_config.per_ip, from_tunnel.per_ip);
+        assert_eq!(from_config.per_conn, from_tunnel.per_conn);
+        assert_eq!(from_config.idle_timeout, from_tunnel.idle_timeout);
+        assert_eq!(from_config.max_lifetime, from_tunnel.max_lifetime);
+    }
+
+    #[test]
+    fn init_writes_a_loadable_config_and_refuses_to_clobber_it() {
+        let dir = TempDir::new("config");
+        let path = dir.join("nested").join("config.json5");
+
+        Config::init(&path).unwrap();
+        assert!(path.exists(), "init creates missing parent directories");
+        let loaded = Config::load(&path).unwrap();
+        assert_eq!(as_value(&loaded), as_value(&Config::default()));
+
+        let err = Config::init(&path).unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
+    }
+
+    #[test]
+    fn load_errors_point_at_init_when_the_file_is_missing() {
+        let dir = TempDir::new("config-missing");
+        let err = Config::load(&dir.join("config.json5")).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("tor-js-gateway init"), "unhelpful error: {msg}");
+    }
+
+    #[test]
+    fn load_reports_the_path_on_a_parse_error() {
+        let dir = TempDir::new("config-bad");
+        let path = dir.join("config.json5");
+        std::fs::write(&path, "{ this is not json5").unwrap();
+        let err = Config::load(&path).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("config.json5"), "unhelpful error: {msg}");
     }
 }

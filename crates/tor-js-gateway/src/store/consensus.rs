@@ -164,3 +164,238 @@ impl ConsensusStore {
         Ok(consensus_text)
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The smallest document `MdConsensus::parse` accepts, parameterised by the
+    /// timestamps the store reads. Signatures are not checked by `parse` (that
+    /// is what the returned `unchecked` value is for), so placeholders suffice.
+    fn consensus_text(valid_after: &str, fresh_until: &str) -> String {
+        format!(
+            "\
+network-status-version 3 microdesc
+vote-status consensus
+consensus-method 34
+valid-after {valid_after}
+fresh-until {fresh_until}
+valid-until 2100-01-01 00:00:00
+voting-delay 300 300
+known-flags Fast Guard Running Stable Valid
+params CircuitPriorityHalflifeMsec=30000
+dir-source aaa {f40} 1.2.3.4 1.2.3.4 80 9001
+contact nobody
+vote-digest {f40}
+r Unnamed {f27} 2026-07-30 00:00:00 5.6.7.8 9001 0
+m {d43}
+s Fast Guard Running Stable Valid
+pr Link=1-5 LinkAuth=3 Relay=1-2
+w Bandwidth=1000
+directory-footer
+bandwidth-weights Wbd=0
+directory-signature sha256 {f40} {g40}
+-----BEGIN SIGNATURE-----
+AAAA
+-----END SIGNATURE-----
+",
+            f40 = "A".repeat(40),
+            g40 = "B".repeat(40),
+            f27 = "A".repeat(27),
+            d43 = "A".repeat(43),
+        )
+    }
+
+    fn secs(t: SystemTime) -> u64 {
+        t.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()
+    }
+
+    #[test]
+    fn timestamps_are_read_from_their_own_lines() {
+        let text = consensus_text("2026-07-30 00:00:00", "2026-07-30 01:00:00");
+        let va = parse_timestamp(&text, "valid-after ").unwrap();
+        let fu = parse_timestamp(&text, "fresh-until ").unwrap();
+        assert_eq!(fu.duration_since(va).unwrap(), std::time::Duration::from_secs(3600));
+        assert_eq!(secs(va), 1785369600);
+    }
+
+    #[test]
+    fn missing_or_malformed_timestamps_are_none() {
+        assert_eq!(parse_timestamp("vote-status consensus\n", "valid-after "), None);
+        assert_eq!(parse_timestamp("valid-after not-a-date\n", "valid-after "), None);
+        assert_eq!(parse_timestamp("valid-after 2026-13-45 99:99:99\n", "valid-after "), None);
+        // The prefix must start the line, so a mention elsewhere is not picked up.
+        assert_eq!(
+            parse_timestamp("contact see valid-after 2026-07-30 00:00:00\n", "valid-after "),
+            None
+        );
+        // Trailing junk is rejected rather than silently truncated: spaces are
+        // rewritten to `T` wholesale, so extra tokens corrupt the timestamp.
+        assert_eq!(
+            parse_timestamp("valid-after 2026-07-30 00:00:00 extra\n", "valid-after "),
+            None
+        );
+    }
+
+    #[test]
+    fn full_consensus_populates_the_store() {
+        let mut store = ConsensusStore::new();
+        assert!(store.diff_hex().is_none());
+        assert!(store.text().is_none());
+        assert!(!store.is_fresh(), "an empty store is never fresh");
+
+        let text = consensus_text("2026-07-30 00:00:00", "2099-01-01 00:00:00");
+        let out = store.resolve_response(text.clone()).unwrap();
+        assert_eq!(out, text);
+        assert_eq!(store.text(), Some(text.as_str()));
+        assert_eq!(store.diff_hex().unwrap().len(), 64, "hex sha3-256");
+        assert!(store.is_fresh(), "fresh-until is in the future");
+    }
+
+    #[test]
+    fn a_stale_consensus_is_not_fresh() {
+        let mut store = ConsensusStore::new();
+        store
+            .resolve_response(consensus_text("2020-01-01 00:00:00", "2020-01-01 01:00:00"))
+            .unwrap();
+        assert!(!store.is_fresh());
+    }
+
+    #[test]
+    fn a_diff_without_a_previous_consensus_is_an_error() {
+        let mut store = ConsensusStore::new();
+        let diff = "network-status-diff-version 1\nhash A B\n";
+        let err = store.resolve_response(diff.to_string()).unwrap_err();
+        assert!(
+            err.to_string().contains("no previous consensus"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn a_diff_whose_digest_does_not_match_is_rejected() {
+        let mut store = ConsensusStore::new();
+        store
+            .resolve_response(consensus_text("2026-07-30 00:00:00", "2099-01-01 00:00:00"))
+            .unwrap();
+
+        // Applies cleanly to the stored text but claims the wrong result digest.
+        let diff = format!(
+            "network-status-diff-version 1\nhash {} {}\n2c\nvote-status consensus\n.\n",
+            "0".repeat(64),
+            "1".repeat(64)
+        );
+        let err = store.resolve_response(diff).unwrap_err();
+        let chain = format!("{err:#}");
+        assert!(chain.contains("digest"), "unexpected error: {chain}");
+    }
+
+    /// The integrity-critical branch: a directory server (or a gateway serving a
+    /// replayed snapshot) must not be able to walk the cached consensus
+    /// backwards.
+    #[test]
+    fn an_older_consensus_is_rejected_and_leaves_the_store_untouched() {
+        let mut store = ConsensusStore::new();
+        let newer = consensus_text("2026-07-30 12:00:00", "2099-01-01 00:00:00");
+        store.resolve_response(newer.clone()).unwrap();
+        let digest_before = store.diff_hex().unwrap();
+
+        let older = consensus_text("2026-07-30 00:00:00", "2099-01-01 00:00:00");
+        let err = store.resolve_response(older).unwrap_err();
+        assert!(
+            err.to_string().contains("older consensus"),
+            "unexpected error: {err}"
+        );
+
+        assert_eq!(store.text(), Some(newer.as_str()), "rollback must not overwrite");
+        assert_eq!(store.diff_hex().unwrap(), digest_before);
+    }
+
+    #[test]
+    fn an_equally_recent_consensus_is_accepted() {
+        // Only strictly older is rejected; a re-fetch of the same period is a
+        // legitimate refresh (its signatures may have grown).
+        let mut store = ConsensusStore::new();
+        let first = consensus_text("2026-07-30 00:00:00", "2026-07-30 01:00:00");
+        store.resolve_response(first).unwrap();
+        let same = consensus_text("2026-07-30 00:00:00", "2026-07-30 02:00:00");
+        assert!(store.resolve_response(same.clone()).is_ok());
+        assert_eq!(store.text(), Some(same.as_str()), "the refresh is stored");
+    }
+
+    #[test]
+    fn a_newer_consensus_replaces_the_previous_one() {
+        let mut store = ConsensusStore::new();
+        store
+            .resolve_response(consensus_text("2026-07-30 00:00:00", "2026-07-30 01:00:00"))
+            .unwrap();
+        let before = store.diff_hex().unwrap();
+        let newer = consensus_text("2026-07-30 12:00:00", "2026-07-30 13:00:00");
+        store.resolve_response(newer.clone()).unwrap();
+        assert_eq!(store.text(), Some(newer.as_str()));
+        assert_ne!(store.diff_hex().unwrap(), before, "digest tracks the new text");
+    }
+
+    #[test]
+    fn responses_missing_required_fields_are_errors() {
+        let full = consensus_text("2026-07-30 00:00:00", "2026-07-30 01:00:00");
+
+        let no_valid_after: String =
+            full.lines().filter(|l| !l.starts_with("valid-after ")).collect::<Vec<_>>().join("\n");
+        let err = ConsensusStore::new().resolve_response(no_valid_after).unwrap_err();
+        assert!(err.to_string().contains("valid-after"), "{err}");
+
+        let no_fresh_until: String =
+            full.lines().filter(|l| !l.starts_with("fresh-until ")).collect::<Vec<_>>().join("\n");
+        let err = ConsensusStore::new().resolve_response(no_fresh_until).unwrap_err();
+        assert!(err.to_string().contains("fresh-until"), "{err}");
+
+        // Timestamps present but the document is not a consensus.
+        let junk = "valid-after 2026-07-30 00:00:00\nfresh-until 2026-07-30 01:00:00\n";
+        let err = ConsensusStore::new().resolve_response(junk.to_string()).unwrap_err();
+        assert!(err.to_string().contains("parsing consensus"), "{err}");
+    }
+
+    fn tempdir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "tor-js-gw-consensus-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn load_from_file_falls_back_to_empty_on_anything_unusable() {
+        let dir = tempdir();
+
+        let missing = dir.join("does-not-exist");
+        assert!(ConsensusStore::load_from_file(&missing).text().is_none());
+
+        let garbage = dir.join("garbage");
+        std::fs::write(&garbage, "not a consensus at all\n").unwrap();
+        assert!(ConsensusStore::load_from_file(&garbage).text().is_none());
+
+        // Parses as text and has timestamps, but is not a consensus document.
+        let half = dir.join("half");
+        std::fs::write(&half, "valid-after 2026-07-30 00:00:00\nfresh-until 2026-07-30 01:00:00\n")
+            .unwrap();
+        assert!(ConsensusStore::load_from_file(&half).text().is_none());
+
+        // A real one loads, and agrees with what resolve_response would compute.
+        let good = dir.join("good");
+        let text = consensus_text("2026-07-30 00:00:00", "2099-01-01 00:00:00");
+        std::fs::write(&good, &text).unwrap();
+        let loaded = ConsensusStore::load_from_file(&good);
+        assert_eq!(loaded.text(), Some(text.as_str()));
+        assert!(loaded.is_fresh());
+
+        let mut fresh = ConsensusStore::new();
+        fresh.resolve_response(text).unwrap();
+        assert_eq!(loaded.diff_hex(), fresh.diff_hex());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

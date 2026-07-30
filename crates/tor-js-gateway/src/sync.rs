@@ -320,3 +320,216 @@ fn atomic_write(dir: &Path, name: &str, data: &[u8]) -> Result<()> {
     std::fs::rename(&tmp, &dst).with_context(|| format!("renaming to {:?}", dst))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::TempDir;
+
+    // ---- atomic_write ----------------------------------------------------
+
+    #[test]
+    fn atomic_write_replaces_contents_and_leaves_no_temp_file() {
+        let dir = TempDir::new("sync-atomic");
+
+        atomic_write(dir.path(), "f.txt", b"first").unwrap();
+        assert_eq!(std::fs::read(dir.join("f.txt")).unwrap(), b"first");
+
+        atomic_write(dir.path(), "f.txt", b"second").unwrap();
+        assert_eq!(std::fs::read(dir.join("f.txt")).unwrap(), b"second");
+
+        assert!(!dir.join("f.txt.tmp").exists(), "the intermediate is renamed away");
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["f.txt".to_string()]);
+    }
+
+    #[test]
+    fn atomic_write_reports_the_path_it_could_not_write() {
+        let dir = TempDir::new("sync-atomic-missing");
+        let err = atomic_write(&dir.join("no-such-subdir"), "f.txt", b"x").unwrap_err();
+        assert!(format!("{err:#}").contains("f.txt.tmp"), "{err:#}");
+    }
+
+    // ---- relay_sync_delay ------------------------------------------------
+
+    fn sample_delays(fresh_in: i64, lifetime_secs: u64, n: usize) -> Vec<Duration> {
+        let now = SystemTime::now();
+        let fresh_until = if fresh_in >= 0 {
+            now + Duration::from_secs(fresh_in as u64)
+        } else {
+            now - Duration::from_secs((-fresh_in) as u64)
+        };
+        let valid_until = fresh_until + Duration::from_secs(lifetime_secs);
+        (0..n).map(|_| relay_sync_delay(fresh_until, valid_until)).collect()
+    }
+
+    /// dir-spec §5.3: refetch at a random instant in the first half of
+    /// `[fresh_until, valid_until]`.
+    #[test]
+    fn sync_delay_lands_in_the_first_half_interval() {
+        // fresh_until 1h out, interval 2h → target in [+1h, +2h].
+        let delays = sample_delays(3600, 7200, 200);
+        for d in &delays {
+            assert!(
+                *d >= Duration::from_secs(3595) && *d <= Duration::from_secs(7200),
+                "delay {d:?} outside the first half-interval"
+            );
+        }
+        let spread = delays.iter().max().unwrap().as_secs() - delays.iter().min().unwrap().as_secs();
+        assert!(spread > 600, "delays should be randomised, spread was {spread}s");
+    }
+
+    /// An already-stale consensus must not produce a long wait: the refetch
+    /// window opened in the past, so only the random offset remains.
+    #[test]
+    fn a_stale_consensus_refetches_within_the_remaining_window() {
+        let delays = sample_delays(-3600, 7200, 200);
+        for d in &delays {
+            assert!(*d <= Duration::from_secs(3600), "delay {d:?} too long for a stale consensus");
+        }
+        assert!(
+            delays.iter().any(|d| *d == Duration::ZERO),
+            "some draws should be due immediately"
+        );
+    }
+
+    #[test]
+    fn a_degenerate_lifetime_falls_back_to_an_hour_interval() {
+        // valid_until == fresh_until: duration_since fails, so the documented
+        // 1h fallback applies and the offset is at most half of it.
+        let now = SystemTime::now();
+        let fresh_until = now + Duration::from_secs(60);
+        for _ in 0..200 {
+            let d = relay_sync_delay(fresh_until, fresh_until);
+            assert!(d <= Duration::from_secs(60 + 1800), "delay {d:?} exceeds the fallback");
+        }
+        // valid_until *before* fresh_until takes the same path rather than panicking.
+        let d = relay_sync_delay(fresh_until, now);
+        assert!(d <= Duration::from_secs(60 + 1800), "{d:?}");
+    }
+
+    #[test]
+    fn sync_delay_never_returns_a_negative_or_panics_at_the_extremes() {
+        let now = SystemTime::now();
+        let far_past = now - Duration::from_secs(86_400 * 365);
+        let far_future = now + Duration::from_secs(86_400 * 365);
+        assert!(relay_sync_delay(far_past, far_past + Duration::from_secs(1)) == Duration::ZERO);
+        assert!(relay_sync_delay(far_future, far_future) > Duration::ZERO);
+        // A huge interval is halved, not overflowed.
+        let d = relay_sync_delay(now, far_future);
+        assert!(d <= Duration::from_secs(86_400 * 365 / 2 + 1), "{d:?}");
+    }
+
+    // ---- bootstrap archive ----------------------------------------------
+
+    /// Mirrors the assumptions of the *consumer*,
+    /// `parse_stored_zip` in `crates/tor-js-wasm/src/fast_bootstrap.rs`: walk
+    /// local file headers from offset 0, require Stored (method 0), and read
+    /// each member's bytes from the sizes in its own local header. The two
+    /// crates cannot share code (one is a wasm cdylib built against the arti
+    /// fork), so this test pins the wire format the client relies on.
+    fn parse_like_the_client(data: &[u8]) -> Vec<(String, Vec<u8>)> {
+        let mut files = Vec::new();
+        let mut offset = 0usize;
+        while offset + 30 <= data.len() {
+            let sig = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+            if sig != 0x04034b50 {
+                break; // central directory reached
+            }
+            let method = u16::from_le_bytes(data[offset + 8..offset + 10].try_into().unwrap());
+            assert_eq!(method, 0, "the client only implements Stored");
+            let compressed_size =
+                u32::from_le_bytes(data[offset + 18..offset + 22].try_into().unwrap()) as usize;
+            let name_len =
+                u16::from_le_bytes(data[offset + 26..offset + 28].try_into().unwrap()) as usize;
+            let extra_len =
+                u16::from_le_bytes(data[offset + 28..offset + 30].try_into().unwrap()) as usize;
+
+            let name_start = offset + 30;
+            let name_end = name_start + name_len;
+            let data_start = name_end + extra_len;
+            let data_end = data_start + compressed_size;
+            assert!(data_end <= data.len(), "member extends past the archive");
+
+            let name = std::str::from_utf8(&data[name_start..name_end])
+                .expect("member names must be UTF-8")
+                .to_string();
+            files.push((name, data[data_start..data_end].to_vec()));
+            offset = data_end;
+        }
+        files
+    }
+
+    #[test]
+    fn the_bootstrap_archive_is_readable_by_the_clients_parser() {
+        let dir = TempDir::new("sync-archive");
+        let consensus = b"network-status-version 3 microdesc\n".repeat(10);
+        let certs = b"dir-key-certificate-version 3\n".repeat(5);
+        let microdescs = b"onion-key\n".repeat(20);
+
+        write_bootstrap_archive(dir.path(), &consensus, &certs, &microdescs).unwrap();
+
+        let zip_bytes = std::fs::read(dir.join("bootstrap.zip")).unwrap();
+        let members = parse_like_the_client(&zip_bytes);
+        assert_eq!(
+            members.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            vec![
+                "bootstrap/consensus-microdesc.txt",
+                "bootstrap/authority-certs.txt",
+                "bootstrap/microdescs.txt",
+            ],
+            "names and order the client expects"
+        );
+        assert_eq!(members[0].1, consensus);
+        assert_eq!(members[1].1, certs);
+        assert_eq!(members[2].1, microdescs);
+    }
+
+    #[test]
+    fn the_compressed_archive_decompresses_to_the_plain_one() {
+        let dir = TempDir::new("sync-archive-zst");
+        write_bootstrap_archive(dir.path(), b"c", b"a", b"m").unwrap();
+
+        let zip_bytes = std::fs::read(dir.join("bootstrap.zip")).unwrap();
+        let zst_bytes = std::fs::read(dir.join("bootstrap.zip.zst")).unwrap();
+        assert_eq!(zstd::decode_all(&zst_bytes[..]).unwrap(), zip_bytes);
+    }
+
+    /// The ETag is over the *uncompressed* zip, which is what
+    /// `read_etag`'s fallback recomputes from `bootstrap.zip`.
+    #[test]
+    fn the_etag_covers_the_uncompressed_archive() {
+        use digest::Digest;
+        let dir = TempDir::new("sync-archive-etag");
+        write_bootstrap_archive(dir.path(), b"c", b"a", b"m").unwrap();
+
+        let zip_bytes = std::fs::read(dir.join("bootstrap.zip")).unwrap();
+        let etag = std::fs::read_to_string(dir.join("bootstrap.etag")).unwrap();
+        assert_eq!(etag, hex::encode(sha3::Sha3_256::digest(&zip_bytes)));
+    }
+
+    #[test]
+    fn different_inputs_get_different_etags() {
+        let dir = TempDir::new("sync-archive-etag2");
+        write_bootstrap_archive(dir.path(), b"c1", b"a", b"m").unwrap();
+        let first = std::fs::read_to_string(dir.join("bootstrap.etag")).unwrap();
+        write_bootstrap_archive(dir.path(), b"c2", b"a", b"m").unwrap();
+        let second = std::fs::read_to_string(dir.join("bootstrap.etag")).unwrap();
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn empty_members_are_still_valid_archive_entries() {
+        // A gateway that has not yet fetched certs writes an empty member
+        // rather than omitting it; the client indexes members by name.
+        let dir = TempDir::new("sync-archive-empty");
+        write_bootstrap_archive(dir.path(), b"", b"", b"").unwrap();
+        let zip_bytes = std::fs::read(dir.join("bootstrap.zip")).unwrap();
+        let members = parse_like_the_client(&zip_bytes);
+        assert_eq!(members.len(), 3);
+        assert!(members.iter().all(|(_, bytes)| bytes.is_empty()));
+    }
+}

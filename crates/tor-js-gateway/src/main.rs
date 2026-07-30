@@ -5,6 +5,8 @@ mod routes;
 mod service;
 mod store;
 mod sync;
+#[cfg(test)]
+mod testutil;
 mod tunnel;
 
 use std::collections::HashSet;
@@ -210,13 +212,7 @@ async fn run(config_path: &PathBuf, once: bool, no_sync: bool) -> Result<()> {
     let relay_allowlist: tunnel::RelayAllowlist = Arc::new(RwLock::new(HashSet::new()));
     preload_allowlist(&cfg.data_dir, &relay_allowlist);
 
-    let limits = tunnel::TunnelLimits {
-        max_tunnels: cfg.tunnel_max,
-        per_ip: cfg.tunnel_per_ip,
-        per_conn: cfg.tunnel_per_ip,
-        idle_timeout: Duration::from_secs(cfg.tunnel_idle_timeout),
-        max_lifetime: Duration::from_secs(cfg.tunnel_max_lifetime),
-    };
+    let limits = cfg.tunnel_limits();
 
     // Detect IPv6 connectivity by checking for a default route.
     let has_ipv6 = detect_ipv6();

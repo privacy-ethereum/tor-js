@@ -132,7 +132,7 @@ fn text_response(status: StatusCode, msg: &str) -> Response<Body> {
 /// Reconstructed size of the request head (request line + header fields).
 /// hyper's `max_buf_size` is a soft cap — a head that arrives in one read can
 /// exceed it — so §3.6 is also enforced here, where we can still answer `431`.
-fn header_block_size(req: &Request<Incoming>) -> usize {
+fn header_block_size<B>(req: &Request<B>) -> usize {
     let request_line =
         req.method().as_str().len() + req.uri().to_string().len() + " HTTP/1.1\r\n".len() + 1;
     req.headers()
@@ -181,5 +181,82 @@ async fn handle_request(req: Request<Incoming>, ctx: ConnCtx) -> Response<Body> 
     match ctx.router.clone().oneshot(req.map(Body::new)).await {
         Ok(res) => res,
         Err(never) => match never {},
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(method: &str, uri: &str, headers: &[(&str, &str)]) -> Request<()> {
+        let mut builder = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        builder.body(()).unwrap()
+    }
+
+    /// This arithmetic, not hyper, is what makes the §3.6 cap answerable with a
+    /// `431`: `max_buf_size` is a soft cap that a single large read can exceed.
+    #[test]
+    fn header_block_size_reconstructs_the_wire_bytes() {
+        // "GET / HTTP/1.1\r\n" is 16 bytes; no field lines.
+        assert_eq!(header_block_size(&req("GET", "/", &[])), 16);
+        // Each field line is `name: value\r\n`.
+        assert_eq!(
+            header_block_size(&req("GET", "/", &[("host", "x")])),
+            16 + "host: x\r\n".len()
+        );
+        // The URI counts in full, including the query.
+        assert_eq!(
+            header_block_size(&req("GET", "/relay/random?a=1", &[])),
+            16 + "/relay/random?a=1".len() - 1
+        );
+        // CONNECT carries an authority-form target.
+        assert_eq!(
+            header_block_size(&req("CONNECT", "1.2.3.4:9001", &[])),
+            "CONNECT 1.2.3.4:9001 HTTP/1.1\r\n".len()
+        );
+    }
+
+    /// The count omits the blank line that terminates the block, so it reads two
+    /// bytes low. That is deliberate slack in a limit, never an overcount that
+    /// could reject a legal head.
+    #[test]
+    fn header_block_size_never_overcounts() {
+        let head = "GET /x HTTP/1.1\r\nhost: example.com\r\naccept: */*\r\n\r\n";
+        let counted = header_block_size(&req(
+            "GET",
+            "/x",
+            &[("host", "example.com"), ("accept", "*/*")],
+        ));
+        assert_eq!(counted, head.len() - 2);
+        assert!(counted <= head.len());
+    }
+
+    #[test]
+    fn header_block_size_straddling_the_cap() {
+        // One header value sized so the whole block lands exactly on the cap.
+        let fixed = header_block_size(&req("GET", "/", &[("x", "")]));
+        let at_cap = "v".repeat(HEADER_CAP - fixed);
+        assert_eq!(header_block_size(&req("GET", "/", &[("x", &at_cap)])), HEADER_CAP);
+        assert!(
+            header_block_size(&req("GET", "/", &[("x", &at_cap)])) <= HEADER_CAP,
+            "exactly at the cap is allowed"
+        );
+
+        let over = "v".repeat(HEADER_CAP - fixed + 1);
+        assert!(header_block_size(&req("GET", "/", &[("x", &over)])) > HEADER_CAP);
+    }
+
+    /// Many small headers must add up the same way one big one does — the cap
+    /// has to bound the whole block, not any single field.
+    #[test]
+    fn header_block_size_accumulates_across_fields() {
+        let headers: Vec<(String, String)> =
+            (0..600).map(|i| (format!("x-pad-{i:03}"), "v".repeat(24))).collect();
+        let borrowed: Vec<(&str, &str)> =
+            headers.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+        assert!(header_block_size(&req("GET", "/", &borrowed)) > HEADER_CAP);
     }
 }
