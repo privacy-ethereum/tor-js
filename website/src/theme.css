@@ -53,11 +53,17 @@
 
 * { box-sizing: border-box; }
 
-html { scroll-behavior: smooth; }
+/* <html> is the canvas and <body> stays transparent so the fixed ambient-glow
+   layer on body::before (z-index:-1) shows through — an opaque body background
+   paints over that negative-z layer and flattens the page to a plain colour.
+   (The inline anti-flash rule in each page's <head> makes html opaque, which
+   also disables body→canvas background propagation, so body must not rely on
+   it. Same arrangement as the kps and anon-rpc sites.) */
+html { scroll-behavior: smooth; background: var(--bg); }
 
 body {
   margin: 0;
-  background: var(--bg);
+  background: transparent;
   color: var(--text);
   font-family: var(--sans);
   font-size: 16px;
