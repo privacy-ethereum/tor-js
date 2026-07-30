@@ -63,11 +63,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Toolchain pins must match scripts/build.sh (which asserts them) and
+      # rust-toolchain.toml: the WASM artifact hash is reproduced by third
+      # parties, and rustc/wasm-pack/wasm-opt versions all change its bytes.
+      # dtolnay's action exports RUSTUP_TOOLCHAIN, which would override
+      # rust-toolchain.toml — so it must name the same version.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.97.1
           targets: wasm32-unknown-unknown
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install wasm-pack + binaryen (pinned)
+        run: |
+          curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | VERSION=v0.14.0 sh
+          curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_116/binaryen-version_116-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_116/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -141,12 +150,17 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Same pins as the client job — build.sh asserts them for release builds.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.97.1
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install wasm-pack + binaryen (pinned)
+        run: |
+          curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | VERSION=v0.14.0 sh
+          curl -sSfL https://github.com/WebAssembly/binaryen/releases/download/version_116/binaryen-version_116-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_116/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-node@v4
         with:
           node-version: 22

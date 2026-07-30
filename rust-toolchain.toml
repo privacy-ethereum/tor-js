@@ -1,0 +1,8 @@
+# Pinned so the WASM artifact is reproducible: dist/tor_js_bg.wasm (and the
+# anon-rpc worker embedding it) must hash identically for CI, local builds and
+# third-party verifiers, and rustc codegen changes between releases. rustup
+# picks this up automatically; CI installs the same version explicitly.
+# Bump deliberately — a new rustc is a new artifact hash.
+[toolchain]
+channel = "1.97.1"
+targets = ["wasm32-unknown-unknown"]
