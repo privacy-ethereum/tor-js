@@ -48,12 +48,27 @@ done
 PINNED_WASM_PACK="0.14.0"
 PINNED_WASM_OPT="116"
 
-# rustc embeds panic-location paths for dependencies, which live under
-# CARGO_HOME — an absolute, per-machine path ($HOME differs) — so remap it.
-# Workspace-member paths are already relative. Set (not append) RUSTFLAGS so a
-# machine-local ~/.cargo/config.toml or ambient RUSTFLAGS can't perturb the
-# build either.
+# rustc embeds panic-location paths, and two families of them are absolute and
+# per-machine. Both are remapped to fixed virtual prefixes.
+#
+# 1. Dependency sources under CARGO_HOME ($HOME differs per machine).
+# 2. The standard library. rustc normally emits these as `/rustc/<commit>/...`,
+#    already machine-independent — BUT only while the `rust-src` component is
+#    absent. With rust-src installed (rust-analyzer pulls it in, so most dev
+#    machines have it) rustc resolves std paths to the real sysroot instead, and
+#    bakes in `$HOME/.rustup/toolchains/<version>-<host-triple>/...`. That
+#    embeds both the username and the host architecture, so a dev machine and CI
+#    produce different artifacts. Remapping it back to the canonical
+#    `/rustc/<commit>` form makes the output identical either way — and is a
+#    no-op on a machine where rust-src is absent, since nothing matches.
+#
+# Both values are derived from rustc, so a toolchain bump needs no edit here.
+# Set (not append) RUSTFLAGS so a machine-local ~/.cargo/config.toml or an
+# ambient RUSTFLAGS cannot perturb the build either.
+RUST_SYSROOT="$(rustc --print sysroot)"
+RUSTC_COMMIT="$(rustc -vV | sed -ne 's/^commit-hash: //p')"
 export RUSTFLAGS="--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo-home"
+export RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$RUST_SYSROOT/lib/rustlib/src/rust=/rustc/$RUSTC_COMMIT"
 
 if [[ "$PROFILE" == "--release" ]]; then
     # wasm-opt must be on PATH at the pinned version: without one, wasm-pack
