@@ -4,11 +4,14 @@
 // This test is self-contained (page/index.html) and independent of the
 // top-level website, which has its own build and hosting.
 import { spawn } from 'node:child_process'
+import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { zstdCompressSync } from 'node:zlib'
 
 const here = dirname(fileURLToPath(import.meta.url))
 // The built binary lands in the Cargo workspace-wide target/ (repo root, four
@@ -60,9 +63,52 @@ function startStaticServer() {
   })
 }
 
-async function startGateway(stateDir) {
+/// A local TCP echo server for the CONNECT tunnel tests.
+function startEcho() {
+  const server = net.createServer(s => {
+    s.on('error', () => {}) // aborted tunnels RST us by design (§4)
+    s.pipe(s)
+  })
+  return new Promise(res =>
+    server.listen(0, '127.0.0.1', () =>
+      res({
+        port: server.address().port,
+        close: () => new Promise(r => server.close(r)),
+      })
+    )
+  )
+}
+
+/// Data-dir fixtures so the browser can exercise the real data path: a
+/// bootstrap archive to download, and a cached consensus whose relay allowlist
+/// contains the echo server (CONNECT only permits advertised relays).
+async function writeFixtures(dataDir, echoPort) {
+  await mkdir(dataDir, { recursive: true })
+
+  // Deliberately larger than a single WebRTC data-channel message, so a
+  // chunking or reassembly bug shows up as a hash mismatch.
+  const bootstrapZip = randomBytes(256 * 1024)
+  await writeFile(join(dataDir, 'bootstrap.zip'), bootstrapZip)
+  const compressed = zstdCompressSync(bootstrapZip)
+  await writeFile(join(dataDir, 'bootstrap.zip.zst'), compressed)
+
+  await writeFile(
+    join(dataDir, 'consensus-microdesc.txt'),
+    `r test AAAAAAAAAAAAAAAAAAAAAAAAAAA 2026-01-01 00:00:00 127.0.0.1 ${echoPort} 0\n`
+  )
+
+  return {
+    bootstrapLen: compressed.length,
+    bootstrapSha256: createHash('sha256').update(compressed).digest('hex'),
+    uncompressedLen: bootstrapZip.length,
+  }
+}
+
+async function startGateway(stateDir, echoPort) {
+  const dataDir = join(stateDir, 'data')
+  const fixtures = await writeFixtures(dataDir, echoPort)
   const cfg = {
-    data_dir: join(stateDir, 'data'),
+    data_dir: dataDir,
     kps_port: 0,
     kps_key_file: join(stateDir, 'kps.key'),
     keccak_dir: '',
@@ -75,6 +121,8 @@ async function startGateway(stateDir) {
   const cfgPath = join(stateDir, 'config.json5')
   await writeFile(cfgPath, JSON.stringify(cfg))
   const child = spawn(gatewayBin, ['--config', cfgPath, 'run', '--no-sync'], {
+    // The echo server is on loopback, which is_local refuses by default.
+    env: { ...process.env, TOR_JS_GATEWAY_ALLOW_LOCAL_TARGETS: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   child.stderr.on('data', c => process.stderr.write(`[gateway] ${c}`))
@@ -90,7 +138,7 @@ async function startGateway(stateDir) {
       const m = buf.match(/127\.0\.0\.1:\d+:u[A-Za-z0-9_-]+/)
       if (m) {
         clearTimeout(timer)
-        res({ address: m[0], child })
+        res({ address: m[0], child, fixtures })
       }
     }
     child.stdout.on('data', onData)
@@ -103,17 +151,29 @@ async function startGateway(stateDir) {
 
 export default async function globalSetup() {
   const stateDir = await mkdtemp(join(tmpdir(), 'tjg-browser-'))
-  const gateway = await startGateway(stateDir)
+  const echo = await startEcho()
+  const gateway = await startGateway(stateDir, echo.port)
   const httpServer = await startStaticServer()
   const baseUrl = `http://127.0.0.1:${httpServer.address().port}`
   await writeFile(
     stateFilePath,
-    JSON.stringify({ gatewayAddress: gateway.address, baseUrl }, null, 2)
+    JSON.stringify(
+      {
+        gatewayAddress: gateway.address,
+        baseUrl,
+        echoTarget: `127.0.0.1:${echo.port}`,
+        ...gateway.fixtures,
+      },
+      null,
+      2
+    )
   )
   console.log(`[setup] gateway: ${gateway.address}`)
   console.log(`[setup] page:    ${baseUrl}`)
+  console.log(`[setup] echo:    127.0.0.1:${echo.port}`)
 
   return async () => {
+    await echo.close()
     await new Promise(res => httpServer.close(() => res()))
     if (gateway.child.exitCode === null) {
       gateway.child.kill('SIGTERM')

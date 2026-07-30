@@ -3,6 +3,8 @@
 // assertion here).
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import { dial } from '@kpstreams/quic-client'
 import {
   makeFixtures,
@@ -208,6 +210,185 @@ test('CONNECT — per-IP tunnel limit returns 429', async () => {
     const t4 = await connectTunnel(c, `127.0.0.1:${echo.port}`)
     assert.equal(t4.status, 200)
     await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+  }
+})
+
+/// Reads (discarding data) until the stream ends, and reports how it ended.
+///
+/// A §4 abort reaches the client as a read *error* (KPS SPEC §9.2: reads error
+/// on RESET, and EOF only on a peer FIN), so this is what distinguishes an
+/// abortive teardown from a graceful one.
+async function readUntilEnd(reader, ms, label) {
+  const deadline = new Promise(r => setTimeout(() => r('timeout'), ms))
+  for (;;) {
+    const outcome = await Promise.race([
+      reader.read().then(
+        ({ done }) => (done ? 'eof' : 'data'),
+        e => `error: ${e?.message ?? e}`,
+      ),
+      deadline,
+    ])
+    if (outcome === 'data') continue
+    if (outcome === 'timeout') throw new Error(`${label} did not happen within ${ms}ms`)
+    return outcome
+  }
+}
+
+test('bootstrap.zip.zst — ETag and If-None-Match get a bodyless 304', async () => {
+  const first = await get(conn, '/bootstrap.zip.zst')
+  assert.equal(first.status, 200)
+  const etag = first.headers['etag']
+  assert.ok(etag, 'an ETag is required for conditional requests')
+
+  const second = await get(conn, '/bootstrap.zip.zst', `If-None-Match: ${etag}\r\n`)
+  assert.equal(second.status, 304)
+  assert.equal(second.body.length, 0, 'a 304 carries no body')
+
+  // A stale validator gets the bytes back.
+  const stale = await get(conn, '/bootstrap.zip.zst', 'If-None-Match: "stale"\r\n')
+  assert.equal(stale.status, 200)
+  assert.equal(stale.body.length, first.body.length)
+})
+
+test('bootstrap.zip.zst — 503 before the archive has been built', async () => {
+  const fx = await makeFixtures({ allowedTargets: [] })
+  await rm(join(fx.dataDir, 'bootstrap.zip.zst'))
+  await rm(join(fx.dataDir, 'bootstrap.zip'))
+  const gw = await spawnGateway(fx)
+  try {
+    const c = await dial(gw.address)
+    // A freshly initialised gateway that has not synced yet must say so rather
+    // than serve an empty archive.
+    assert.equal((await get(c, '/bootstrap.zip.zst')).status, 503)
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+  }
+})
+
+test('relay/random — 503 with an empty allowlist', async () => {
+  const fx = await makeFixtures({ allowedTargets: [] })
+  const gw = await spawnGateway(fx)
+  try {
+    const c = await dial(gw.address)
+    const res = await get(c, '/relay/random')
+    assert.equal(res.status, 503)
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+  }
+})
+
+test('CONNECT — the global tunnel cap returns 429 regardless of client', async () => {
+  // Only the per-IP cap was covered; this pins the server-wide ceiling.
+  const fx = await makeFixtures({ allowedTargets: [`127.0.0.1:${echo.port}`] })
+  const gw = await spawnGateway(fx, { config: { tunnel_max: 1, tunnel_per_ip: 16 } })
+  try {
+    const c = await dial(gw.address)
+    assert.equal((await connectTunnel(c, `127.0.0.1:${echo.port}`)).status, 200)
+    assert.equal((await connectTunnel(c, `127.0.0.1:${echo.port}`)).status, 429)
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+  }
+})
+
+test('CONNECT — an idle tunnel is torn down abortively', async () => {
+  const fx = await makeFixtures({ allowedTargets: [`127.0.0.1:${echo.port}`] })
+  const gw = await spawnGateway(fx, { config: { tunnel_idle_timeout: 1 } })
+  try {
+    const c = await dial(gw.address)
+    const t = await connectTunnel(c, `127.0.0.1:${echo.port}`)
+    assert.equal(t.status, 200)
+
+    // Nothing flows in either direction, so the idle timer expires. §4 maps a
+    // timeout to an abortive close, which the client sees as a read error —
+    // never as a clean EOF, which would look like the target closing normally.
+    const ending = await readUntilEnd(t.reader, 8000, 'idle teardown')
+    assert.match(ending, /^error/, `expected an abortive close, got ${ending}`)
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+  }
+})
+
+test('CONNECT — a tunnel is torn down at its maximum lifetime', async () => {
+  const fx = await makeFixtures({ allowedTargets: [`127.0.0.1:${echo.port}`] })
+  const gw = await spawnGateway(fx, {
+    config: { tunnel_max_lifetime: 1, tunnel_idle_timeout: 300 },
+  })
+  try {
+    const c = await dial(gw.address)
+    const t = await connectTunnel(c, `127.0.0.1:${echo.port}`)
+    assert.equal(t.status, 200)
+
+    // Traffic keeps the idle timer from firing, so only the lifetime cap can
+    // end this tunnel — again abortively.
+    await t.writer.write(enc.encode('still here'))
+    const ending = await readUntilEnd(t.reader, 8000, 'lifetime teardown')
+    assert.match(ending, /^error/, `expected an abortive close, got ${ending}`)
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+  }
+})
+
+test('CONNECT — resetting the stream releases the tunnel slot', async () => {
+  // Cancellation has to free capacity; otherwise a client that aborts its
+  // tunnels eventually locks itself out.
+  const fx = await makeFixtures({ allowedTargets: [`127.0.0.1:${echo.port}`] })
+  const gw = await spawnGateway(fx, { config: { tunnel_per_ip: 1 } })
+  try {
+    const c = await dial(gw.address)
+    const t = await connectTunnel(c, `127.0.0.1:${echo.port}`)
+    assert.equal(t.status, 200)
+    assert.equal((await connectTunnel(c, `127.0.0.1:${echo.port}`)).status, 429, 'cap reached')
+
+    await t.stream.close({ code: 'Reset' })
+    // Give the gateway a moment to notice and drop the guard.
+    for (let i = 0; i < 40; i++) {
+      const retry = await connectTunnel(c, `127.0.0.1:${echo.port}`)
+      if (retry.status === 200) {
+        await c.close()
+        return
+      }
+      await new Promise(r => setTimeout(r, 50))
+    }
+    assert.fail('the slot was never released after the stream reset')
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+  }
+})
+
+test('CONNECT — losing the connection mid-tunnel releases the slot', async () => {
+  const fx = await makeFixtures({ allowedTargets: [`127.0.0.1:${echo.port}`] })
+  const gw = await spawnGateway(fx, { config: { tunnel_per_ip: 1 } })
+  try {
+    const first = await dial(gw.address)
+    const t = await connectTunnel(first, `127.0.0.1:${echo.port}`)
+    assert.equal(t.status, 200)
+    // Drop the whole connection with the tunnel still open.
+    await first.close()
+
+    const second = await dial(gw.address)
+    for (let i = 0; i < 40; i++) {
+      const retry = await connectTunnel(second, `127.0.0.1:${echo.port}`)
+      if (retry.status === 200) {
+        await second.close()
+        return
+      }
+      await new Promise(r => setTimeout(r, 50))
+    }
+    assert.fail('the slot was never released after the connection dropped')
   } finally {
     await gw.stop()
     await fx.cleanup()

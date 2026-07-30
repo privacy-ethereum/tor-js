@@ -5,6 +5,9 @@ on:
     branches: [main, kps]
   pull_request:
   workflow_dispatch:
+  # Drives the live-tor job below; the hermetic jobs run on every push anyway.
+  schedule:
+    - cron: '17 4 * * *'
 
 # Minimal by default; the Pages deploy job elevates its own permissions.
 permissions:
@@ -14,6 +17,9 @@ jobs:
   # Native gateway crate: build, Rust tests, and the KPS transport tests
   # (QUIC via @kpstreams/quic-client, WebRTC via @kpstreams/webrtc-client).
   gateway:
+    # The nightly schedule exists only for live-tor below; the hermetic jobs run
+    # on every push and PR, so there is nothing for them to catch overnight.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,8 +30,15 @@ jobs:
       # binary lands in the workspace target/, where the JS harnesses look.
       - name: Build gateway
         run: cargo build --locked
-      - name: Rust unit tests
+      - name: Rust unit tests (gateway)
         run: cargo test --locked
+
+      # The WASM client crate also compiles for the host under cfg(test), so its
+      # pure logic — the bootstrap zip parser and the HTTP/1 codec — is covered
+      # by plain cargo test instead of needing a WASM harness. It is not a
+      # default workspace member, hence the explicit -p.
+      - name: Rust unit tests (wasm client crate)
+        run: cargo test --locked -p tor-js
 
       - uses: actions/setup-node@v4
         with:
@@ -46,6 +59,7 @@ jobs:
 
   # WASM client crate + TypeScript wrapper, and assembly of the showcase site.
   client:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,15 +78,16 @@ jobs:
       - name: Build WASM + TS wrapper
         run: npm run build
 
-      # Gateway selection (shuffle, least-outstanding, cooldown, deadlines,
-      # bootstrap failover) against a fake KPS dialer — no network.
+      # TypeScript unit tests, all against fakes — no network. Covers gateway
+      # selection, the KPS-HTTP/1 client, the KPS address parser, both storage
+      # layers, client/singleton lifecycle and the worker's config helpers.
       - name: Unit tests
         run: npm run test:unit
 
       # anon-rpc worker (dist/anon-rpc-worker.js is produced by the build above):
       # assert the shipped bundle is clean, then run the offline harness test.
-      # The real Tor fetch (test:e2e) is intentionally NOT in CI — it needs live
-      # Tor egress and can't be hermetic; CI stays network-free like the rest.
+      # The real Tor fetch (test:e2e) stays out of this job so it remains
+      # network-free; it runs in the non-gating live-tor job below.
       - name: anon-rpc worker — bundle assertions
         run: |
           f=dist/anon-rpc-worker.js
@@ -99,10 +114,114 @@ jobs:
         run: cp -a website/dist _site
       - uses: actions/upload-pages-artifact@v3
 
+  # Live-Tor end-to-end checks, against a gateway this job starts and syncs
+  # itself. NOT a gate: they need real Tor egress, so they can fail for reasons
+  # that have nothing to do with the code (a slow relay, a directory hiccup).
+  # They run on a schedule and on demand so a real regression surfaces without
+  # someone remembering to run them by hand.
+  #
+  # The public demo gateway is deliberately not used: it may disappear at any
+  # time, and CI must never depend on it.
+  live-tor:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build client (WASM + TS)
+        run: |
+          npm ci
+          npm run build
+      - name: Build gateway
+        run: cargo build --locked --release
+
+      - name: Start a gateway and wait for it to sync from Tor
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/gateway"
+          mkdir -p "$dir/data"
+          node -e '
+            const fs = require("fs");
+            const dir = process.env.DIR;
+            fs.writeFileSync(dir + "/config.json5", JSON.stringify({
+              data_dir: dir + "/data",
+              kps_port: 12298,
+              kps_key_file: dir + "/kps.key",
+              keccak_dir: "",
+              advertised_addresses: ["127.0.0.1"],
+              tunnel_max: 8192,
+              tunnel_per_ip: 16,
+              tunnel_idle_timeout: 300,
+              tunnel_max_lifetime: 3600,
+            }, null, 2));
+          '
+          ./target/release/tor-js-gateway --config "$dir/config.json5" run \
+            > "$dir/gateway.log" 2>&1 &
+          echo "GATEWAY_PID=$!" >> "$GITHUB_ENV"
+
+          # The dialable address is printed at startup...
+          addr=""
+          for _ in $(seq 1 60); do
+            addr=$(grep -oE '127\.0\.0\.1:[0-9]+:u[A-Za-z0-9_-]+' "$dir/gateway.log" | head -1 || true)
+            [ -n "$addr" ] && break
+            sleep 5
+          done
+          if [ -z "$addr" ]; then tail -50 "$dir/gateway.log"; exit 1; fi
+          echo "GATEWAY=$addr" >> "$GITHUB_ENV"
+
+          # ...but the relay allowlist and the bootstrap archive only exist once
+          # the first directory sync completes, which is what the client needs.
+          for _ in $(seq 1 120); do
+            [ -f "$dir/data/bootstrap.zip.zst" ] && break
+            sleep 5
+          done
+          if [ ! -f "$dir/data/bootstrap.zip.zst" ]; then tail -80 "$dir/gateway.log"; exit 1; fi
+          echo "gateway ready at $addr"
+        env:
+          DIR: ${{ runner.temp }}/gateway
+
+      - name: Install the worker harness
+        working-directory: test/anon-rpc-worker
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Real Tor fetch through the worker
+        working-directory: test/anon-rpc-worker
+        run: npm run test:e2e
+
+      # Against the default public echo, which de-chunks the request body: this
+      # verifies the byte-exact round trip, and the harness skips its framing
+      # assertion because that echo cannot report the framing it received.
+      # Proving `Transfer-Encoding: chunked` on the wire needs echo-server.mjs
+      # hosted somewhere reachable over Tor.
+      - name: Streaming upload through Tor
+        working-directory: test/anon-rpc-worker
+        run: npm run test:stream-upload
+
+      - name: Gateway log
+        if: failure()
+        run: tail -120 "$RUNNER_TEMP/gateway/gateway.log"
+      - name: Stop the gateway
+        if: always()
+        run: kill "$GATEWAY_PID" 2>/dev/null || true
+
   # Deploy the website to GitHub Pages — main only.
   deploy-site:
     needs: client
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       pages: write
