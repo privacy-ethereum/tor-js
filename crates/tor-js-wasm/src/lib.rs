@@ -27,7 +27,10 @@
 //! await client.close();
 //! ```
 
-#![cfg(target_arch = "wasm32")]
+// The crate only *runs* on wasm32, but it also compiles for the host under
+// `cfg(test)` so the pure logic — the bootstrap zip parser and the HTTP codec —
+// is covered by a plain `cargo test` instead of needing a browser/Node harness.
+#![cfg(any(target_arch = "wasm32", test))]
 
 mod error;
 mod fast_bootstrap;
