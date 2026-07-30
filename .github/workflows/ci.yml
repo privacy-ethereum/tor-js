@@ -78,6 +78,18 @@ jobs:
       - name: Build WASM + TS wrapper
         run: npm run build
 
+      # Reproducibility check, half of it: the hashes of the shipped artifacts,
+      # plus the toolchain versions that went into them. Compare against a local
+      # clean-tree build of the same commit — matching sha256 here means a third
+      # party reproduces the same anon-rpc worker pin (keccak256) too. If they
+      # differ, the versions printed alongside are the first suspects.
+      - name: Artifact hashes (compare with a local build of this commit)
+        run: |
+          echo "commit: $(git rev-parse HEAD)"
+          rustc --version && wasm-pack --version && node --version
+          wasm-opt --version 2>/dev/null || echo "wasm-opt: not on PATH (wasm-pack-managed)"
+          sha256sum dist/anon-rpc-worker.js dist/tor_js_bg.wasm
+
       # TypeScript unit tests, all against fakes — no network. Covers gateway
       # selection, the KPS-HTTP/1 client, the KPS address parser, both storage
       # layers, client/singleton lifecycle and the worker's config helpers.

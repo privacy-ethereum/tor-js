@@ -33,7 +33,10 @@ async function main() {
 // URLs can then serve as anon-rpc specifier resolvers). See workers/anon-rpc/.
 async function buildWorker() {
   const { bytes, sha256 } = await buildAnonRpcWorker({ outfile: resolve(distDir, 'anon-rpc-worker.js') });
-  console.log(`Built anon-rpc worker: dist/anon-rpc-worker.js ${(bytes / 1024 / 1024).toFixed(2)} MB (sha256 ${sha256.slice(0, 16)}…)`);
+  // Full hash, not truncated: this line is what a reproducing builder (CI log
+  // vs local) compares. sha256 equality implies the keccak256 pin matches too.
+  console.log(`Built anon-rpc worker: dist/anon-rpc-worker.js ${(bytes / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`anon-rpc worker SHA256: ${sha256}`);
 }
 
 /**

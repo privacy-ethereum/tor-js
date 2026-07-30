@@ -29,9 +29,13 @@ fn main() {
 
     println!("cargo:rustc-env=TOR_JS_VERSION={version}{dev}");
 
-    // Git short SHA
+    // Full git SHA. Not --short: the abbreviation length scales with the
+    // clone's object count, so a shallow CI clone and a full local clone can
+    // embed different strings — which alone would change the artifact hash and
+    // defeat reproducible-build verification. The full sha is identical
+    // everywhere by construction.
     let sha = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
+        .args(["rev-parse", "HEAD"])
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
