@@ -92,9 +92,14 @@ jobs:
       # clean-tree build of the same commit — matching sha256 here means a third
       # party reproduces the same anon-rpc worker pin (keccak256) too. If they
       # differ, the versions printed alongside are the first suspects.
+      # These hashes should match a clean-tree build of the same commit on any
+      # host, including a different CPU architecture — verified between x86_64
+      # and aarch64 Linux. If they ever diverge, the toolchain versions printed
+      # alongside are the first suspects.
       - name: Artifact hashes (compare with a local build of this commit)
         run: |
           echo "commit: $(git rev-parse HEAD)"
+          echo "host:   $(rustc -vV | sed -ne 's/^host: //p')"
           rustc --version && wasm-pack --version && node --version
           wasm-opt --version 2>/dev/null || echo "wasm-opt: not on PATH (wasm-pack-managed)"
           sha256sum dist/anon-rpc-worker.js dist/tor_js_bg.wasm
