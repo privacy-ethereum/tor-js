@@ -70,6 +70,15 @@ RUSTC_COMMIT="$(rustc -vV | sed -ne 's/^commit-hash: //p')"
 export RUSTFLAGS="--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo-home"
 export RUSTFLAGS="$RUSTFLAGS --remap-path-prefix=$RUST_SYSROOT/lib/rustlib/src/rust=/rustc/$RUSTC_COMMIT"
 
+# The remaining host dependence is cargo's `-C metadata` hash, which is derived
+# from host-specific inputs and cannot be overridden through RUSTFLAGS (the flag
+# accumulates rather than replaces). A wrapper can rewrite it; see the script for
+# the mechanism and rust-lang/cargo#8140 for the upstream issue. Overrides any
+# machine-local rustc-wrapper (e.g. sccache), which is fine — release builds
+# should not be served from a local compilation cache anyway.
+export TOR_JS_WORKSPACE_ROOT="$PWD"
+export RUSTC_WRAPPER="$PWD/scripts/reproducible-rustc.sh"
+
 if [[ "$PROFILE" == "--release" ]]; then
     # wasm-opt must be on PATH at the pinned version: without one, wasm-pack
     # silently downloads its own binaryen (a different version per wasm-pack
