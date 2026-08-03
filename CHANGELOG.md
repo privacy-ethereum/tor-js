@@ -2,7 +2,11 @@
 
 ## 0.4.1
 
-Additive only — no API or wire changes from 0.4.0.
+No API or wire changes from 0.4.0. One behaviour change to be aware of: a
+truncated response body is now an error instead of a silently short read (see
+**Fixes**).
+
+### Added
 
 - **Streaming request bodies.** `fetch()`'s `body` now accepts a `ReadableStream<Uint8Array>` alongside `string`, `Uint8Array` and `ArrayBuffer`. A stream is sent as it's produced, with `Transfer-Encoding: chunked` framing, instead of being buffered to learn its length — so uploads no longer need to fit in memory. Bodies of known size still use `Content-Length`. (Response bodies already streamed.)
 - **Multiple gateways.** `gateway` accepts an array of KPS addresses to fail over and spread load between. The list is an **unordered set** — position implies no priority, and each client shuffles it, so independent clients don't all pile onto the same gateway. Within a preferred set of two, the gateway carrying the fewest connections is chosen, which also serves as the latency signal: a slow or stalled gateway stops being picked. Failures cool a gateway off with exponential backoff and it is re-admitted automatically once it recovers.
@@ -11,6 +15,55 @@ Additive only — no API or wire changes from 0.4.0.
 - **Injectable KPS transport.** `ArtiSocketProvider` accepts a `dial` function, and `TorClientOptions` accepts a `socketProvider`. Supplying a dialer means the built-in `@kpstreams` client is never loaded, so an embedder that already holds a KPS transport can bundle tor-js without it. The KPS address parser is vendored to keep that path free of runtime `@kpstreams` deps.
 - Relay-connect failover keeps the target fixed across gateways, so a gateway cannot influence relay (guard) selection by refusing `CONNECT`s.
 - `dist/anon-rpc-worker.js` is now built into the package: a hash-pinned [anon-rpc](https://github.com/privacy-ethereum/anon-rpc) worker that offers anonymized `fetch` from a sandboxed worker, reaching the network only through a host-granted KPS capability. Experimental and not yet a documented API; it is a hosted artifact rather than an import.
+
+### Fixes
+
+- **A truncated response body is now an error.** With `Content-Length` framing, a
+  connection that closed with bytes still owed was reported as a clean end, so
+  callers received a short body and no indication of it. Chunked framing had the
+  same hole twice over: end-of-stream while awaiting the CRLF after a chunk, and
+  end-of-stream before the terminating `0`-chunk, both read as a complete body.
+  All three now error. Malformed chunk framing is also caught rather than
+  silently dropping two bytes and corrupting the next chunk-size line.
+  **This is the one behaviour change in the release**: a peer that closes early
+  where it previously appeared to succeed now surfaces an error.
+- **A `1xx` interim response could hang the request.** After skipping a `100
+  Continue`, the reader waited for more bytes before checking what it already
+  held — so an interim and final response arriving in the same packet left it
+  blocked on data the server had already finished sending.
+- **A malformed bootstrap archive could panic the client.** The Stored-zip parser
+  computed member offsets in `usize`, which is 32 bits on wasm32: a crafted
+  `compressed_size` wrapped past the bounds check and then panicked on a
+  backwards slice — reachable by whoever serves the archive. Offsets are now
+  accumulated in `u64`, so the check behaves identically on every target.
+- **A failed bootstrap no longer crashes a Node host.** `TorClient.ready()`
+  cleared its cached promise through a derived promise that nothing awaited, and
+  the constructor started bootstrap with no handler attached at all. Either could
+  raise an unhandled rejection — fatal in Node — on top of the error the caller
+  already received.
+- **Gateway: `is_local()` missed several non-routable IPv6 ranges** —
+  `fe80::/10`, `fc00::/7`, multicast, and the v4-mapped and (deprecated)
+  v4-compatible embeddings of broadcast/unspecified addresses. `CONNECT` targets
+  must also appear in the consensus relay allowlist, so this was defence in depth
+  rather than a reachable SSRF, but 11 addresses that previously passed the check
+  are now refused.
+
+### Build
+
+- **The WASM artifact is reproducible across machines.** `dist/tor_js_bg.wasm`
+  and `dist/anon-rpc-worker.js` now hash identically for any clean-tree build of
+  a given commit, verified between `x86_64` and `aarch64` Linux hosts — which
+  matters because the worker's keccak256 is a pinned, externally verifiable
+  identity. This needed the toolchain pinned (`rust-toolchain.toml`, plus
+  wasm-pack and binaryen asserted by `scripts/build.sh`), dependency and
+  standard-library paths remapped out of panic locations, and a `RUSTC_WRAPPER`
+  that makes cargo's `-C metadata` host-independent
+  ([rust-lang/cargo#8140](https://github.com/rust-lang/cargo/issues/8140)).
+  A dirty working tree deliberately does *not* reproduce: it embeds a timestamp,
+  marking the build as unverifiable.
+- The test suite grew from 19 tests to 408 across the Rust crates, the TypeScript
+  layer, the gateway integration suite and the browser data path. The fixes above
+  were all found by writing them.
 
 ## 0.4.0
 

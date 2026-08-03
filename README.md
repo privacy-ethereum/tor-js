@@ -101,7 +101,7 @@ type FetchInit = {
 };
 ```
 
-Response bodies stream: `res.body` is a `ReadableStream` you can consume as it arrives, so a large download needn't be buffered.
+Response bodies stream: `res.body` is a `ReadableStream` you can consume as it arrives, so a large download needn't be buffered. A body that ends early — fewer bytes than `Content-Length`, or a chunked body without its terminating chunk — errors the stream rather than completing short.
 
 Request bodies stream too. A `ReadableStream` body is sent as it's produced, using `Transfer-Encoding: chunked` — so an upload of unknown or unbounded size never has to fit in memory:
 
@@ -216,6 +216,21 @@ const log = new Log({
   rawLog: (level, ...args) => myLogger[level](...args),
 });
 ```
+
+## Verifying the build
+
+The WASM binary is reproducible: a clean-tree `npm run build` of a given commit
+produces byte-identical `dist/tor_js_bg.wasm` and `dist/anon-rpc-worker.js` on
+any host, including a different CPU architecture (verified across `x86_64` and
+`aarch64` Linux). Each CI run prints the commit, the toolchain versions and both
+hashes, so you can check a release against your own build.
+
+Two things to know if a hash doesn't match: the toolchain is pinned
+(`rust-toolchain.toml`, plus wasm-pack and binaryen versions asserted by
+`scripts/build.sh`), and a **dirty working tree deliberately won't reproduce** —
+it embeds a build timestamp so an unverifiable build is self-identifying. Build
+from a clean checkout, and note that a stale `target/` directory is not
+guaranteed canonical.
 
 ## License
 
