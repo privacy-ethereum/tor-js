@@ -1,0 +1,5 @@
+# Every object on this branch is identified by keccak256 of its exact bytes, so
+# nothing here may be transformed on the way in or out. `-text` disables
+# end-of-line conversion, which would otherwise rewrite these files on a machine
+# with core.autocrlf=true and break every hash in the tree.
+* -text
