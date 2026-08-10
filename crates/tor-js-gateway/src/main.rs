@@ -1,6 +1,8 @@
 mod config;
 mod dir;
+mod keccak_mirror;
 mod kps_server;
+mod mirror_cli;
 mod routes;
 mod service;
 mod store;
@@ -41,9 +43,25 @@ enum Command {
         once: bool,
 
         /// Serve only from cached data: skip the Tor client and consensus sync
-        /// (implies ignoring --once)
+        /// (implies ignoring --once). Does not affect the object mirror
         #[arg(long)]
         no_sync: bool,
+
+        /// Skip the worker-bundle mirror: serve the objects already on disk and
+        /// never poll the branch (client-triggered syncs are refused too)
+        #[arg(long)]
+        no_mirror: bool,
+    },
+    /// Ask a gateway to sync its worker-bundle objects from the mirrored branch
+    /// now, instead of waiting for its next poll
+    Sync {
+        /// KPS address of the gateway (`ip:port:certhash`). Defaults to the
+        /// local gateway, derived from this config's port and identity key
+        address: Option<String>,
+
+        /// Only report the mirror's state; don't trigger a sync
+        #[arg(long)]
+        status: bool,
     },
     /// Create a default config file and the KPS identity key
     Init,
@@ -61,7 +79,14 @@ enum Command {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Command::Run { once: false, no_sync: false }) {
+    match cli.command.unwrap_or(Command::Run {
+        once: false,
+        no_sync: false,
+        no_mirror: false,
+    }) {
+        Command::Sync { address, status } => {
+            mirror_cli::run(&cli.config, address, status).await
+        }
         Command::Init => init(&cli.config),
         Command::ShowConfig => {
             let cfg = config::Config::load(&cli.config)?;
@@ -72,7 +97,9 @@ async fn main() -> Result<()> {
             println!("{}", config::Config::to_json5_with_comments());
             Ok(())
         }
-        Command::Run { once, no_sync } => run(&cli.config, once, no_sync).await,
+        Command::Run { once, no_sync, no_mirror } => {
+            run(&cli.config, once, no_sync, no_mirror).await
+        }
         Command::Install => service::install(&cli.config),
         Command::Uninstall => service::uninstall(),
     }
@@ -197,7 +224,7 @@ fn preload_allowlist(data_dir: &std::path::Path, allowlist: &tunnel::RelayAllowl
     }
 }
 
-async fn run(config_path: &PathBuf, once: bool, no_sync: bool) -> Result<()> {
+async fn run(config_path: &PathBuf, once: bool, no_sync: bool, no_mirror: bool) -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -222,9 +249,33 @@ async fn run(config_path: &PathBuf, once: bool, no_sync: bool) -> Result<()> {
         tracing::info!("no IPv6 connectivity — IPv6 relay targets will be rejected");
     }
 
-    // Empty keccak_dir disables the worker-bundles capability. Objects are
-    // verified lazily on request, so nothing needs to exist here at startup.
-    let worker_bundles_enabled = !cfg.keccak_dir.as_os_str().is_empty();
+    // Worker bundles come from a mirrored GitHub branch. Both keccak_repo and
+    // keccak_branch have to be set — unset means the capability is simply off,
+    // never a defaulted repository (config::keccak_source enforces that, and
+    // Config::load already rejected a half-configured pair).
+    let mirror = match cfg.keccak_source()? {
+        config::KeccakSource::Disabled => {
+            tracing::info!(
+                "worker-bundles disabled: set keccak_repo and keccak_branch to mirror a branch"
+            );
+            None
+        }
+        config::KeccakSource::Mirror { repo, branch } => {
+            let mirror = keccak_mirror::Mirror::new(
+                cfg.keccak_dir(),
+                cfg.data_dir.join("keccak.json"),
+                repo.clone(),
+                branch.clone(),
+                Duration::from_secs(cfg.keccak_manual_sync_min_interval),
+            )?;
+            tracing::info!("worker-bundles: mirroring {}@{} into {}", repo, branch, cfg.keccak_dir().display());
+            // Serve last run's objects straight away; the first sync only
+            // reconciles them with the branch.
+            mirror.adopt_existing();
+            Some(mirror)
+        }
+    };
+    let worker_bundles_enabled = mirror.is_some();
 
     // Start the KPS listener: one UDP port serving both QUIC and WebRTC.
     let listener = kps::listen(
@@ -251,13 +302,29 @@ async fn run(config_path: &PathBuf, once: bool, no_sync: bool) -> Result<()> {
         tracker: tunnel::ConnectionTracker::new(),
         limits,
         has_ipv6,
-        keccak_dir: cfg.keccak_dir.clone(),
-        keccak_enabled: worker_bundles_enabled,
+        keccak_dir: cfg.keccak_dir(),
+        mirror: mirror.clone(),
         verified_bundles: std::sync::RwLock::new(std::collections::HashSet::new()),
         metadata_json: routes::build_metadata(&addresses, worker_bundles_enabled),
     });
     let router = routes::build_router(gateway.clone());
     tokio::spawn(kps_server::run(listener, gateway, router));
+
+    // The mirror polls independently of the consensus sync: they answer to
+    // different origins on different schedules, and a gateway is useful with
+    // either one alone.
+    match (mirror, no_mirror) {
+        (Some(mirror), true) => {
+            mirror.disable_syncs();
+            tracing::info!("--no-mirror: serving the objects already on disk");
+        }
+        (Some(mirror), false) => {
+            tokio::spawn(
+                mirror.poll_loop(Duration::from_secs(cfg.keccak_poll_interval)),
+            );
+        }
+        (None, _) => {}
+    }
 
     if no_sync {
         tracing::info!("--no-sync: serving cached data only, consensus sync disabled");

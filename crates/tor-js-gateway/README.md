@@ -9,7 +9,7 @@ Built with [Arti](https://gitlab.torproject.org/tpo/core/arti), the Rust Tor imp
 - **KPS transport** — One UDP port serves both QUIC (native clients) and WebRTC (browsers). Clients dial `<ip>:<port>:<certhash>` directly: the certificate hash in the address *is* the server's identity, so there is no CA, no domain, and no DNS. Every exchange speaks [KPS-HTTP/1](PROTOCOL.md) — HTTP/1.1 syntax under a strict profile, one exchange per stream.
 - **Fast Bootstrap** — Serves the consensus, authority certificates, and microdescriptors as a single zstd-compressed archive at `/bootstrap.zip.zst`. One fetch, decompressed by the client — no multi-step directory protocol, no round trips to authorities.
 - **TCP relay via CONNECT** — `CONNECT <ip>:<port>` on a KPS stream turns that stream into a raw byte pipe to a Tor relay. The client builds circuits and negotiates keys — the gateway only forwards opaque, encrypted data. Only consensus-advertised relay addresses are allowed.
-- **Worker bundle hosting** — Serves immutable, hash-addressed JavaScript bundles at `/keccak/{hash[0..2]}/{hash[2..]}`, from a disk tree with the same sharded layout. Each file is verified against its path-derived hash on request (lazily, so objects can be added without a restart) and the result cached; the gateway treats them as opaque bytes and never builds them.
+- **Worker bundle hosting** — Serves immutable, hash-addressed JavaScript bundles at `/keccak/{hash[0..2]}/{hash[2..]}`, mirrored from a branch of a GitHub repository. Publishing is a `git push`; unpublishing is deleting the file. Bytes are checked against their own name before they are stored and again when they are served, so the branch chooses *which* objects exist but never what they contain — the gateway treats them as opaque and never builds them.
 
 ## Quick start
 
@@ -78,11 +78,31 @@ Config is stored as JSON5 (supports comments and trailing commas) at `~/.config/
   // the gateway's published address is derived from it, so keep it stable.
   "kps_key_file": "~/.local/share/tor-js-gateway/kps.key",
 
-  // Root of the hash-addressed object tree served at
-  // /keccak/{hash[0..2]}/{hash[2..]}; the disk layout mirrors the route
-  // (<keccak_dir>/<hh>/<rest>, keccak256 of each file's bytes = its path).
-  // Empty string disables the worker-bundles capability.
-  "keccak_dir": "",
+  // ---- Worker bundles (/keccak/{hash[0..2]}/{hash[2..]}) ----
+  //
+  // Objects are mirrored from a branch of a GitHub repository into
+  // <data_dir>/keccak, which the gateway owns: it adds objects the branch
+  // gained and deletes ones the branch dropped, so do not put files there by
+  // hand. Every file in the branch must be named for its own content —
+  // <hh>/<rest>, the 64 lowercase hex chars of keccak256(bytes) split after
+  // the first byte, no extension. Anything else in the tree is ignored.
+  //
+  // BOTH of these must be set to serve worker bundles, and neither has a
+  // default: leaving them empty disables the capability rather than quietly
+  // mirroring somebody else's repository. Setting only one is an error.
+  //
+  //   "keccak_repo": "privacy-ethereum/tor-js",
+  //   "keccak_branch": "keccak",
+  "keccak_repo": "",
+  "keccak_branch": "",
+
+  // Seconds between automatic mirror polls (86400 = once a day)
+  "keccak_poll_interval": 86400,
+
+  // Minimum seconds between client-triggered syncs (POST /keccak/sync).
+  // A trigger inside the window is refused with 429 + Retry-After; the
+  // automatic poll is unaffected by it.
+  "keccak_manual_sync_min_interval": 1800,
 
   // IP addresses to advertise in metadata.json (the UDP port and certhash are
   // appended automatically). Empty: auto-detect from the default route.
@@ -117,6 +137,68 @@ Set `RUST_LOG` to control log verbosity (default: `info`):
 RUST_LOG=debug tor-js-gateway
 ```
 
+`GITHUB_TOKEN`, if set, authenticates the mirror's requests. A daily poll plus
+throttled client triggers fits comfortably inside GitHub's unauthenticated
+60-requests-per-hour-per-IP limit, so this is only needed when the gateway
+shares an address with other traffic that spends the same budget.
+
+## Publishing worker bundles
+
+The mirrored branch is the publishing interface. A bundle is published by
+committing it under the name of its own hash:
+
+```
+hash=$(node -e 'process.stdout.write(require("@noble/hashes/sha3").keccak_256(require("fs").readFileSync(process.argv[1])).reduce((s,b)=>s+b.toString(16).padStart(2,"0"),""))' worker.js)
+mkdir -p "${hash:0:2}"
+cp worker.js "${hash:0:2}/${hash:2}"
+git add "${hash:0:2}/${hash:2}" && git commit -m "publish $hash" && git push
+```
+
+Note the file has **no extension** — the whole path is the hash, split after the
+first byte. Anything else in the branch (a README, a licence) is ignored.
+
+Gateways pick it up on their next poll, up to `keccak_poll_interval` later. To
+avoid waiting, ask one directly:
+
+```
+tor-js-gateway sync                      # the local gateway
+tor-js-gateway sync <ip>:<port>:<certhash>   # any gateway you publish to
+tor-js-gateway sync --status             # report only; changes nothing
+```
+
+`sync` is a *client*: it dials the gateway over KPS and runs one
+`POST /keccak/sync` exchange, so the running gateway remains the only process
+that writes the object directory. With no address it derives the local
+gateway's from `kps_port` and `kps_key_file`. It prints the gateway's JSON reply
+and exits non-zero if the sync was refused, so it drops into a script:
+
+```
+$ tor-js-gateway sync
+asking 127.0.0.1:12298:uEiCzlf…wKQ to sync its worker-bundle objects…
+{
+  "added": 1,
+  "commit": "f79735ade21706486c01ff29b210cb55d4a49438",
+  "ignored": 3,
+  "objects": 2,
+  "removed": 0,
+  "unchanged": false
+}
+```
+
+The reply comes after the sync has finished, so a success means the object is
+being served. It is refused with `429` and a `Retry-After` if a
+client-triggered sync ran within `keccak_manual_sync_min_interval` (30 minutes
+by default) — the endpoint is unauthenticated, and that window is what stops
+anyone from using it to hammer GitHub. The automatic poll is unaffected by it,
+so a `429` only ever costs you the wait.
+
+Anything that speaks [KPS-HTTP/1](../../PROTOCOL.md) can do the same;
+`POST`/`GET /keccak/sync` is specified in §5.1.
+
+Deleting the file from the branch unpublishes the object: the next sync removes
+it from disk and it stops being served. The gateway owns `<data_dir>/keccak`
+entirely — files placed there by hand are deleted on the next sync.
+
 ## CLI
 
 ```
@@ -126,6 +208,7 @@ tor-js-gateway [OPTIONS] [COMMAND]
 | Command | Description |
 |---|---|
 | `run` | Run the server in the foreground (default) |
+| `sync [ADDRESS]` | Ask a gateway to sync its worker-bundle objects now (`--status` to report only). Defaults to the local gateway; exits non-zero if refused |
 | `init` | Create a default config file and the KPS identity key |
 | `show-config` | Print the current config from disk |
 | `show-default-config` | Print the hardcoded default config |
@@ -136,7 +219,8 @@ tor-js-gateway [OPTIONS] [COMMAND]
 |---|---|
 | `-c, --config <PATH>` | Config file path (default: `~/.config/tor-js-gateway/config.json5`) |
 | `run --once` | Exit after the first successful sync |
-| `run --no-sync` | Serve only cached data; skip the Tor client and consensus sync |
+| `run --no-sync` | Serve only cached data; skip the Tor client and consensus sync. Does not affect the object mirror |
+| `run --no-mirror` | Serve the objects already on disk; never poll the branch, and refuse client-triggered syncs |
 
 ## The wire protocol
 
@@ -149,6 +233,7 @@ tor-js-gateway [OPTIONS] [COMMAND]
 | `metadata` | `GET /metadata.json` | Protocol/version/capabilities/addresses discovery document |
 | `bootstrap` | `GET /bootstrap.zip.zst` | Zstd bootstrap archive (raw bytes; clients decompress). Includes `X-Decompressed-Content-Length`; supports `ETag`/304 |
 | `worker-bundles` | `GET /keccak/{hh}/{rest}` | Immutable hash-addressed bundles, path split after the first hex byte (`Cache-Control: immutable`) |
+| `worker-bundles-sync` | `GET`/`POST /keccak/sync` | `GET` reports mirror state; `POST` syncs now (`429` + `Retry-After` inside the throttle window, `409` while one is running, `502` if the sync failed, `503` under `--no-mirror`) |
 | `connect` | `CONNECT <ip>:<port>` | TCP tunnel to a consensus relay |
 | `relay-random` | `GET /relay/random` | Random relay address from the consensus (IPv4 only if no IPv6) |
 

@@ -1,6 +1,6 @@
 [package]
 name = "tor-js-gateway"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.91"
 
@@ -25,6 +25,10 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 axum = "0.8"
 tower = { version = "0.5", features = ["util"] }
 bytes = "1"
+
+# Mirroring the hash-addressed object tree from a GitHub branch. native-tls so
+# the binary carries one TLS stack, the same one arti-client is built against.
+reqwest = { version = "0.12", default-features = false, features = ["native-tls", "json", "stream"] }
 
 # External
 tokio = { version = "1", features = ["full"] }

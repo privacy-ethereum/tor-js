@@ -40,11 +40,22 @@ pub struct Config {
     /// Path to the persistent KPS identity key (PEM; created by `init`)
     pub kps_key_file: PathBuf,
 
-    /// Root of the hash-addressed object tree served at
-    /// `/keccak/{hash[0..2]}/{hash[2..]}` — the disk layout mirrors the
-    /// route (`<keccak_dir>/<hh>/<rest>`); empty disables the
-    /// worker-bundles capability
-    pub keccak_dir: PathBuf,
+    /// GitHub repository mirrored into the hash-addressed object store, as
+    /// `owner/repo`. Empty disables the worker-bundles capability; there is
+    /// deliberately no default, so no operator mirrors a repository they did
+    /// not name
+    pub keccak_repo: String,
+
+    /// Branch of `keccak_repo` to mirror. Required whenever `keccak_repo` is
+    /// set — never defaulted, for the same reason
+    pub keccak_branch: String,
+
+    /// Seconds between automatic mirror polls
+    pub keccak_poll_interval: u64,
+
+    /// Minimum seconds between client-triggered syncs (`POST /keccak/sync`);
+    /// a trigger inside the window is refused
+    pub keccak_manual_sync_min_interval: u64,
 
     /// IP addresses to advertise in metadata.json (the UDP port and certhash
     /// are appended automatically); empty auto-detects
@@ -69,7 +80,10 @@ impl Default for Config {
             data_dir: default_data_dir(),
             kps_port: 12298,
             kps_key_file: default_key_file(),
-            keccak_dir: PathBuf::new(),
+            keccak_repo: String::new(),
+            keccak_branch: String::new(),
+            keccak_poll_interval: 86_400,
+            keccak_manual_sync_min_interval: 1_800,
             advertised_addresses: Vec::new(),
             tunnel_max: 8192,
             tunnel_per_ip: 16,
@@ -79,7 +93,90 @@ impl Default for Config {
     }
 }
 
+/// Where the hash-addressed objects come from, once the config has been
+/// validated. There is no "a directory the operator fills by hand" variant:
+/// the mirror owns `<data_dir>/keccak` and prunes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeccakSource {
+    /// `keccak_repo`/`keccak_branch` unset — the worker-bundles capability is
+    /// not advertised and `/keccak/*` answers 404.
+    Disabled,
+    Mirror { repo: String, branch: String },
+}
+
+/// `owner/repo`: exactly one slash, both halves non-empty, and only the
+/// characters GitHub actually allows in each. Rejecting the rest here keeps
+/// anything surprising out of the URL paths built from it.
+fn valid_repo(repo: &str) -> bool {
+    let Some((owner, name)) = repo.split_once('/') else {
+        return false;
+    };
+    let ok = |s: &str, extra: &str| {
+        !s.is_empty()
+            && s.len() <= 100
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || extra.as_bytes().contains(&b))
+    };
+    ok(owner, "-_") && ok(name, "-_.")
+}
+
+/// A branch name that is safe to splice into a URL path. Deliberately stricter
+/// than git's own rules (which permit `/`, `?`, `#`, `%`, …): those would let a
+/// branch name reach past the endpoint it is interpolated into.
+fn valid_branch(branch: &str) -> bool {
+    !branch.is_empty()
+        && branch.len() <= 255
+        && !branch.starts_with(['-', '.'])
+        && !branch.ends_with('.')
+        && branch
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_./".contains(&b))
+        && !branch.contains("..")
+        && !branch.contains("//")
+}
+
 impl Config {
+    /// Where `/keccak/*` objects come from, or an error when the two mirror
+    /// fields disagree about whether the capability is wanted.
+    ///
+    /// Both unset is a valid, silent "off". Exactly one set is always a
+    /// mistake, and is refused rather than half-honored — the alternative is a
+    /// gateway that mirrors a defaulted branch nobody chose.
+    pub fn keccak_source(&self) -> Result<KeccakSource> {
+        let repo = self.keccak_repo.trim();
+        let branch = self.keccak_branch.trim();
+        match (repo.is_empty(), branch.is_empty()) {
+            (true, true) => return Ok(KeccakSource::Disabled),
+            (true, false) => anyhow::bail!(
+                "keccak_branch is set to {branch:?} but keccak_repo is empty — \
+                 set both (e.g. \"privacy-ethereum/tor-js\" + \"keccak\") to serve \
+                 worker bundles, or clear both to disable the capability"
+            ),
+            (false, true) => anyhow::bail!(
+                "keccak_repo is set to {repo:?} but keccak_branch is empty — \
+                 there is no default branch on purpose; name the branch to mirror"
+            ),
+            (false, false) => {}
+        }
+        if !valid_repo(repo) {
+            anyhow::bail!("keccak_repo {repo:?} is not a GitHub \"owner/repo\"");
+        }
+        if !valid_branch(branch) {
+            anyhow::bail!("keccak_branch {branch:?} is not a usable branch name");
+        }
+        Ok(KeccakSource::Mirror {
+            repo: repo.to_string(),
+            branch: branch.to_string(),
+        })
+    }
+
+    /// Root of the mirrored object tree: `<data_dir>/keccak/<hh>/<rest>`, the
+    /// same sharded layout the `/keccak/` route exposes. Not configurable —
+    /// the mirror deletes files here, so it must be a directory it owns.
+    pub fn keccak_dir(&self) -> PathBuf {
+        self.data_dir.join("keccak")
+    }
+
     /// The tunnel limits this config asks for. `tunnel_per_ip` deliberately
     /// caps both the per-IP and the per-KPS-connection budget, so one client
     /// cannot multiply its allowance by opening more connections.
@@ -108,11 +205,31 @@ impl Config {
   // the gateway's published address is derived from it, so keep it stable.
   "kps_key_file": {},
 
-  // Root of the hash-addressed object tree served at
-  // /keccak/{{hash[0..2]}}/{{hash[2..]}}; the disk layout mirrors the route
-  // (<keccak_dir>/<hh>/<rest>, keccak256 of each file's bytes = its path).
-  // Empty string disables the worker-bundles capability.
-  "keccak_dir": "",
+  // ---- Worker bundles (/keccak/{{hash[0..2]}}/{{hash[2..]}}) ----
+  //
+  // Objects are mirrored from a branch of a GitHub repository into
+  // <data_dir>/keccak, which the gateway owns: it adds objects the branch
+  // gained and deletes ones the branch dropped, so do not put files there by
+  // hand. Every file in the branch must be named for its own content —
+  // <hh>/<rest>, the 64 lowercase hex chars of keccak256(bytes) split after
+  // the first byte, no extension. Anything else in the tree is ignored.
+  //
+  // BOTH of these must be set to serve worker bundles, and neither has a
+  // default: leaving them empty disables the capability rather than quietly
+  // mirroring somebody else's repository. Setting only one is an error.
+  //
+  //   "keccak_repo": "privacy-ethereum/tor-js",
+  //   "keccak_branch": "keccak",
+  "keccak_repo": "",
+  "keccak_branch": "",
+
+  // Seconds between automatic mirror polls (86400 = once a day)
+  "keccak_poll_interval": {},
+
+  // Minimum seconds between client-triggered syncs (POST /keccak/sync).
+  // A trigger inside the window is refused with 429 + Retry-After; the
+  // automatic poll is unaffected by it.
+  "keccak_manual_sync_min_interval": {},
 
   // IP addresses to advertise in metadata.json (the UDP port and certhash are
   // appended automatically). Empty: auto-detect from the default route.
@@ -134,6 +251,8 @@ impl Config {
             serde_json::to_string(&cfg.data_dir).unwrap(),
             cfg.kps_port,
             serde_json::to_string(&cfg.kps_key_file).unwrap(),
+            cfg.keccak_poll_interval,
+            cfg.keccak_manual_sync_min_interval,
             cfg.tunnel_max,
             cfg.tunnel_per_ip,
             cfg.tunnel_idle_timeout,
@@ -145,8 +264,23 @@ impl Config {
     pub fn load(path: &PathBuf) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading config at {}\n\nRun `tor-js-gateway init` to create a default config.", path.display()))?;
-        let cfg: Config =
-            json5::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+        let cfg: Config = json5::from_str(&text)
+            .map_err(|e| match text.contains("keccak_dir") {
+                // `deny_unknown_fields` catches the old key, but "unknown field
+                // keccak_dir" does not tell an operator what to do about it.
+                true => anyhow::anyhow!(
+                    "`keccak_dir` is gone: objects are now mirrored from a GitHub branch \
+                     into <data_dir>/keccak.\nRemove the field and set `keccak_repo` \
+                     (\"owner/repo\") and `keccak_branch` instead — see \
+                     `tor-js-gateway show-default-config`.\n\n({e})"
+                ),
+                false => anyhow::anyhow!(e),
+            })
+            .with_context(|| format!("parsing {}", path.display()))?;
+        // Fail at load, not at first use: a gateway that starts and only then
+        // reveals it cannot serve bundles is worse than one that refuses to.
+        cfg.keccak_source()
+            .with_context(|| format!("in {}", path.display()))?;
         Ok(cfg)
     }
 
@@ -196,7 +330,10 @@ mod tests {
   "data_dir": "/tmp/d",
   "kps_port": 1234,
   "kps_key_file": "/tmp/k",
-  "keccak_dir": "",
+  "keccak_repo": "",
+  "keccak_branch": "",
+  "keccak_poll_interval": 86400,
+  "keccak_manual_sync_min_interval": 1800,
   "advertised_addresses": ["1.2.3.4"],
   "tunnel_max": 10,
   "tunnel_per_ip": 2,
@@ -262,6 +399,122 @@ mod tests {
 
         let err = Config::init(&path).unwrap_err();
         assert!(err.to_string().contains("already exists"), "{err}");
+    }
+
+    // ---- keccak source resolution ---------------------------------------
+
+    fn source_of(repo: &str, branch: &str) -> Result<KeccakSource> {
+        Config {
+            keccak_repo: repo.to_string(),
+            keccak_branch: branch.to_string(),
+            ..Config::default()
+        }
+        .keccak_source()
+    }
+
+    #[test]
+    fn both_fields_empty_disables_the_capability() {
+        assert_eq!(source_of("", "").unwrap(), KeccakSource::Disabled);
+        // Whitespace is not a configuration value.
+        assert_eq!(source_of("  ", "\t").unwrap(), KeccakSource::Disabled);
+    }
+
+    #[test]
+    fn both_fields_set_resolves_to_a_mirror() {
+        assert_eq!(
+            source_of("privacy-ethereum/tor-js", "keccak").unwrap(),
+            KeccakSource::Mirror {
+                repo: "privacy-ethereum/tor-js".into(),
+                branch: "keccak".into(),
+            }
+        );
+    }
+
+    /// Half-configured is always a mistake. Defaulting the other half is the
+    /// specific failure mode to avoid: it would mirror a repository or branch
+    /// the operator never named.
+    #[test]
+    fn exactly_one_field_set_is_an_error_naming_the_missing_one() {
+        let err = source_of("privacy-ethereum/tor-js", "").unwrap_err().to_string();
+        assert!(err.contains("keccak_branch"), "{err}");
+        assert!(err.contains("no default"), "{err}");
+
+        let err = source_of("", "keccak").unwrap_err().to_string();
+        assert!(err.contains("keccak_repo"), "{err}");
+    }
+
+    #[test]
+    fn a_malformed_repo_is_rejected() {
+        for repo in [
+            "tor-js",                       // no owner
+            "privacy-ethereum/tor-js/x",    // too many segments
+            "/tor-js",                      // empty owner
+            "privacy-ethereum/",            // empty name
+            "privacy ethereum/tor-js",      // space
+            "privacy-ethereum/../../etc",   // traversal
+            "https://github.com/a/b",       // a URL, not owner/repo
+        ] {
+            assert!(source_of(repo, "keccak").is_err(), "accepted repo {repo:?}");
+        }
+    }
+
+    /// Branch names are spliced into URL paths, so the rules here are tighter
+    /// than git's: git would allow every one of these.
+    #[test]
+    fn a_branch_name_that_could_escape_its_url_path_is_rejected() {
+        for branch in [
+            "..",
+            "a/../../b",
+            "keccak?ref=main",
+            "keccak#frag",
+            "keccak%2F",
+            "-keccak",
+            ".keccak",
+            "keccak.",
+            "a//b",
+            "with space",
+        ] {
+            assert!(
+                source_of("privacy-ethereum/tor-js", branch).is_err(),
+                "accepted branch {branch:?}",
+            );
+        }
+        // Slashes inside a name are normal and stay allowed.
+        assert!(source_of("privacy-ethereum/tor-js", "feature/keccak").is_ok());
+    }
+
+    #[test]
+    fn load_rejects_a_half_configured_mirror() {
+        let dir = TempDir::new("config-half");
+        let path = dir.join("config.json5");
+        let text = Config::to_json5_with_comments()
+            .replace(r#""keccak_repo": """#, r#""keccak_repo": "privacy-ethereum/tor-js""#);
+        std::fs::write(&path, text).unwrap();
+        let msg = format!("{:#}", Config::load(&path).unwrap_err());
+        assert!(msg.contains("keccak_branch"), "{msg}");
+    }
+
+    /// The old key names a directory the operator filled by hand; the mirror
+    /// now owns that directory. Say so, rather than "unknown field".
+    #[test]
+    fn load_explains_the_retired_keccak_dir_field() {
+        let dir = TempDir::new("config-legacy");
+        let path = dir.join("config.json5");
+        let text = Config::to_json5_with_comments()
+            .replace(r#""keccak_repo": """#, r#""keccak_dir": "/srv/bundles""#);
+        std::fs::write(&path, text).unwrap();
+        let msg = format!("{:#}", Config::load(&path).unwrap_err());
+        assert!(msg.contains("keccak_repo"), "{msg}");
+        assert!(msg.contains("mirrored"), "{msg}");
+    }
+
+    #[test]
+    fn the_object_dir_lives_under_the_data_dir() {
+        let cfg = Config {
+            data_dir: PathBuf::from("/var/lib/gw"),
+            ..Config::default()
+        };
+        assert_eq!(cfg.keccak_dir(), PathBuf::from("/var/lib/gw/keccak"));
     }
 
     #[test]
