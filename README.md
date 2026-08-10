@@ -42,14 +42,21 @@ Deleting a file unpublishes that object: mirrors remove it on their next sync
 and stop serving it.
 
 Gateways poll roughly daily, so a push is visible within a day. To make one
-pick it up immediately, ask it directly over KPS:
+pick it up immediately, ask it directly:
 
-```
-POST /keccak/sync
+```sh
+tor-js-gateway sync <ip>:<port>:<certhash>   # trigger a sync now
+tor-js-gateway sync <ip>:<port>:<certhash> --status   # report only
 ```
 
-which answers once the sync has finished. It is refused with `429` and a
-`Retry-After` if a client-triggered sync ran there in the last 30 minutes.
+That runs one `POST /keccak/sync` exchange over KPS ([KPS-HTTP/1
+§5.1](https://github.com/privacy-ethereum/tor-js/blob/main/PROTOCOL.md), so
+anything speaking the profile can do it too). The reply comes after the sync has
+finished, so a success means the object is being served. It is refused with
+`429` and a `Retry-After` if a client-triggered sync ran on that gateway in the
+last 30 minutes — the endpoint is unauthenticated, and that window is what keeps
+it from being used to hammer this repository. The gateway's own poll is
+unaffected, so a `429` only ever costs you the wait.
 
 ## Verifying an object
 
