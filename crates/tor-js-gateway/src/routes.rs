@@ -13,6 +13,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 
+use crate::keccak_mirror::{Mirror, TriggerError};
 use crate::tunnel::{ConnectionTracker, RelayAllowlist, TunnelLimits};
 
 /// Shared server state: everything the routes and the CONNECT handler need.
@@ -22,18 +23,25 @@ pub struct Gateway {
     pub tracker: ConnectionTracker,
     pub limits: TunnelLimits,
     pub has_ipv6: bool,
-    /// Root of the hash-addressed object tree (`<keccak_dir>/<hh>/<rest>`);
-    /// empty when the capability is disabled.
+    /// Root of the hash-addressed object tree (`<keccak_dir>/<hh>/<rest>`),
+    /// which the mirror owns.
     pub keccak_dir: PathBuf,
-    /// Whether the worker-bundles capability is enabled (keccak_dir is set).
-    pub keccak_enabled: bool,
+    /// The object mirror, or `None` when the worker-bundles capability is
+    /// disabled — in which case `/keccak/*` is a 404 like any unknown path.
+    pub mirror: Option<Arc<Mirror>>,
     /// Hashes verified on a prior request. Content is hash-addressed and
-    /// immutable, so a hash that verified once stays valid; caching it lets
-    /// repeat requests skip re-hashing. Populated lazily — nothing needs to
-    /// exist at startup.
+    /// immutable, so a hash that verified once stays valid — including across a
+    /// mirror sync, which can add or drop objects but never change what a given
+    /// hash means. Populated lazily; nothing needs to exist at startup.
     pub verified_bundles: RwLock<HashSet<String>>,
     /// Precomputed `/metadata.json` document.
     pub metadata_json: String,
+}
+
+impl Gateway {
+    fn keccak_enabled(&self) -> bool {
+        self.mirror.is_some()
+    }
 }
 
 /// Builds the metadata document served at `/metadata.json` (PROTOCOL.md §5).
@@ -41,6 +49,7 @@ pub fn build_metadata(addresses: &[String], worker_bundles: bool) -> String {
     let mut capabilities = vec!["metadata", "bootstrap", "connect", "relay-random"];
     if worker_bundles {
         capabilities.push("worker-bundles");
+        capabilities.push("worker-bundles-sync");
     }
     serde_json::json!({
         "protocol": "kps-http/1",
@@ -52,11 +61,11 @@ pub fn build_metadata(addresses: &[String], worker_bundles: bool) -> String {
     .to_string()
 }
 
-fn is_lower_hex(s: &str, len: usize) -> bool {
+pub fn is_lower_hex(s: &str, len: usize) -> bool {
     s.len() == len && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-fn keccak256_hex(bytes: &[u8]) -> String {
+pub fn keccak256_hex(bytes: &[u8]) -> String {
     use digest::Digest;
     hex::encode(sha3::Keccak256::digest(bytes))
 }
@@ -68,8 +77,77 @@ pub fn build_router(gateway: Arc<Gateway>) -> Router {
         .route("/metadata.json", get(handle_metadata))
         .route("/bootstrap.zip.zst", get(handle_bootstrap_zip_zst))
         .route("/keccak/{prefix}/{rest}", get(handle_worker_bundle))
+        .route("/keccak/sync", get(handle_mirror_status).post(handle_mirror_sync))
         .route("/relay/random", get(handle_random_relay))
         .with_state(gateway)
+}
+
+fn json_response(status: StatusCode, body: &serde_json::Value) -> Response {
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/json")],
+        body.to_string(),
+    )
+        .into_response()
+}
+
+/// GET /keccak/sync — what the mirror is tracking and how the last sync went.
+/// Everything here is already public (the repository, the branch, the commit);
+/// it exists so an operator can check the mirror's health over KPS.
+async fn handle_mirror_status(State(gw): State<Arc<Gateway>>) -> Response {
+    let Some(mirror) = &gw.mirror else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match serde_json::to_value(mirror.status()) {
+        Ok(body) => json_response(StatusCode::OK, &body),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// POST /keccak/sync — re-read the branch now, instead of waiting for the poll.
+///
+/// Unauthenticated by design: the throttle, not a credential, is what bounds
+/// how often anyone can make this gateway talk to its origin. The response
+/// arrives after the sync finishes, so a publisher learns whether the object it
+/// just pushed is actually being served.
+async fn handle_mirror_sync(State(gw): State<Arc<Gateway>>) -> Response {
+    let Some(mirror) = &gw.mirror else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match mirror.trigger().await {
+        Ok(outcome) => {
+            let body = serde_json::to_value(&outcome).unwrap_or_else(|_| serde_json::json!({}));
+            json_response(StatusCode::OK, &body)
+        }
+        Err(TriggerError::Throttled { retry_after }) => {
+            // Round up: a client that waits exactly this long must be past the
+            // window, not land one millisecond inside it.
+            let secs = retry_after.as_secs() + 1;
+            let mut res = json_response(
+                StatusCode::TOO_MANY_REQUESTS,
+                &serde_json::json!({
+                    "error": "a manual sync ran too recently",
+                    "retry_after": secs,
+                }),
+            );
+            if let Ok(value) = secs.to_string().parse() {
+                res.headers_mut().insert(header::RETRY_AFTER, value);
+            }
+            res
+        }
+        Err(TriggerError::Disabled) => json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &serde_json::json!({ "error": "syncing is disabled on this gateway" }),
+        ),
+        Err(TriggerError::Busy) => json_response(
+            StatusCode::CONFLICT,
+            &serde_json::json!({ "error": "a sync is already running" }),
+        ),
+        Err(TriggerError::Failed(e)) => json_response(
+            StatusCode::BAD_GATEWAY,
+            &serde_json::json!({ "error": format!("{e:#}") }),
+        ),
+    }
 }
 
 /// GET /metadata.json — capability discovery.
@@ -83,17 +161,19 @@ async fn handle_metadata(State(gw): State<Arc<Gateway>>) -> Response {
 }
 
 /// GET /keccak/{hash[0..2]}/{hash[2..]} — immutable, hash-addressed worker
-/// bundles served from disk at the same sharded path.
+/// bundles served from the mirrored tree at the same sharded path.
 ///
 /// Verification is lazy: the file is read and its keccak256 checked against
-/// the path on request, so objects can be added after startup without a
-/// restart. A hash that verifies is cached (content is immutable), and the
+/// the path on request, so objects appear as soon as a sync lands them, with no
+/// restart. The mirror already hashed them on the way in, so this is the
+/// second check rather than the only one — it is what would catch later
+/// corruption. A hash that verifies is cached (content is immutable), and the
 /// hex validation on the path segments also keeps the join traversal-safe.
 async fn handle_worker_bundle(
     State(gw): State<Arc<Gateway>>,
     Path((prefix, rest)): Path<(String, String)>,
 ) -> Response {
-    if !gw.keccak_enabled || !is_lower_hex(&prefix, 2) || !is_lower_hex(&rest, 62) {
+    if !gw.keccak_enabled() || !is_lower_hex(&prefix, 2) || !is_lower_hex(&rest, 62) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let hash = format!("{prefix}{rest}");
@@ -258,7 +338,14 @@ mod tests {
         let doc: serde_json::Value = serde_json::from_str(&build_metadata(&addrs, true)).unwrap();
         assert_eq!(
             doc["capabilities"],
-            serde_json::json!(["metadata", "bootstrap", "connect", "relay-random", "worker-bundles"])
+            serde_json::json!([
+                "metadata",
+                "bootstrap",
+                "connect",
+                "relay-random",
+                "worker-bundles",
+                "worker-bundles-sync"
+            ])
         );
     }
 
@@ -323,7 +410,7 @@ mod tests {
             limits: TunnelLimits::default(),
             has_ipv6,
             keccak_dir: PathBuf::new(),
-            keccak_enabled: false,
+            mirror: None,
             verified_bundles: RwLock::new(HashSet::new()),
             metadata_json: build_metadata(&[], false),
         })
@@ -479,7 +566,18 @@ mod tests {
             limits: gw.limits.clone(),
             has_ipv6: true,
             keccak_dir: dir.path().to_path_buf(),
-            keccak_enabled: true,
+            // A mirror is what enables the capability; these tests exercise the
+            // serving path, so it never gets asked to sync.
+            mirror: Some(
+                crate::keccak_mirror::Mirror::new(
+                    dir.join("mirror-objects"),
+                    dir.join("mirror-state.json"),
+                    "owner/repo".into(),
+                    "keccak".into(),
+                    std::time::Duration::from_secs(1800),
+                )
+                .unwrap(),
+            ),
             verified_bundles: RwLock::new(HashSet::new()),
             metadata_json: gw.metadata_json.clone(),
         })

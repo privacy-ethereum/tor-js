@@ -1,7 +1,8 @@
 // Shared helpers: gateway fixtures/spawning and minimal KPS-HTTP/1 exchanges
 // (PROTOCOL.md §3) over @kpstreams/quic-client streams.
 import { spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
+import { createServer } from 'node:http'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
@@ -21,15 +22,19 @@ export const GATEWAY_BIN =
 
 const hex = b => Buffer.from(b).toString('hex')
 
-/// Creates a gateway working dir: bootstrap fixtures, worker bundles
-/// (one valid, one with a lying filename), and a cached consensus whose relay
-/// allowlist contains `allowedTargets`.
+/// Creates a gateway working dir: bootstrap fixtures and a cached consensus
+/// whose relay allowlist contains `allowedTargets`.
+///
+/// Hash-addressed objects are not seeded here by default — the mirror owns
+/// <dataDir>/keccak and prunes anything the branch doesn't list. Tests that
+/// want files there without a mirror use `seedObject`/`seedRawObject` together
+/// with `--no-mirror`.
 export async function makeFixtures({ allowedTargets = [] } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'tjg-it-'))
   const dataDir = join(dir, 'data')
-  const bundlesDir = join(dir, 'bundles')
+  const keccakDir = join(dataDir, 'keccak')
   await mkdir(dataDir)
-  await mkdir(bundlesDir)
+  await mkdir(keccakDir)
 
   // The gateway serves the bootstrap archive opaquely, so arbitrary bytes do.
   const bootstrapZip = randomBytes(1024)
@@ -45,37 +50,192 @@ export async function makeFixtures({ allowedTargets = [] } = {}) {
     .join('\n')
   await writeFile(join(dataDir, 'consensus-microdesc.txt'), rLines + '\n')
 
-  // Hash-addressed objects at <keccak_dir>/<hh>/<rest> (disk layout mirrors
-  // the /keccak/ route): one correctly placed, one whose path lies.
-  const bundleBytes = Buffer.from(`export const fixture = '${randomBytes(8).toString('hex')}'\n`)
-  const bundleHash = hex(keccak_256(bundleBytes))
-  // recursive: the random bundle hash can share the fixed '00' prefix below
-  // (~1/256), in which case a plain mkdir of an existing dir throws EEXIST.
-  await mkdir(join(bundlesDir, bundleHash.slice(0, 2)), { recursive: true })
-  await writeFile(join(bundlesDir, bundleHash.slice(0, 2), bundleHash.slice(2)), bundleBytes)
-  await mkdir(join(bundlesDir, '00'), { recursive: true })
-  await writeFile(join(bundlesDir, '00', '0'.repeat(62)), Buffer.from('// wrong hash\n'))
-
   return {
     dir,
     dataDir,
-    bundlesDir,
+    keccakDir,
     bootstrapZip,
-    bundleBytes,
-    bundleHash,
-    // Drop a new hash-addressed object into the tree at runtime; returns its
-    // keccak256 hex (its /keccak/<hh>/<rest> path). Used to prove lazy loading.
-    async addBundle(content) {
+    /// Place a correctly-named object straight into the mirror's directory,
+    /// bypassing the mirror. Only meaningful under --no-mirror, since a sync
+    /// prunes whatever the branch does not list.
+    async seedObject(content) {
       const bytes = Buffer.from(content)
       const h = hex(keccak_256(bytes))
-      await mkdir(join(bundlesDir, h.slice(0, 2)), { recursive: true })
-      await writeFile(join(bundlesDir, h.slice(0, 2), h.slice(2)), bytes)
+      await mkdir(join(keccakDir, h.slice(0, 2)), { recursive: true })
+      await writeFile(join(keccakDir, h.slice(0, 2), h.slice(2)), bytes)
       return { hash: h, bytes }
+    },
+    /// Place bytes at a hash path they do not hash to — the case the route's
+    /// own verification exists to catch.
+    async seedRawObject(hash, content) {
+      await mkdir(join(keccakDir, hash.slice(0, 2)), { recursive: true })
+      await writeFile(join(keccakDir, hash.slice(0, 2), hash.slice(2)), Buffer.from(content))
+      return hash
     },
     async cleanup() {
       await rm(dir, { recursive: true, force: true })
     },
   }
+}
+
+/// A stand-in for the three GitHub endpoints the object mirror uses: the branch
+/// ref, the recursive tree, and raw blob bytes. One server carries both bases —
+/// `/repos/…` is the API, `/raw/…` is raw.githubusercontent.com — so a gateway
+/// only needs two env vars pointed here.
+///
+/// The branch is mutable: `publish`/`unpublish` change the tree and move the
+/// head commit, which is what a `git push` looks like from the mirror's side.
+export async function startFakeGitHub({ repo = 'owner/repo', branch = 'keccak' } = {}) {
+  const files = new Map() // path ("<hh>/<rest>", or anything else) -> Buffer
+  const sizeOverrides = new Map() // path -> size the tree listing claims
+  const requests = []
+  let commitCounter = 0
+  let commit = nextCommit()
+  let truncated = false
+
+  function nextCommit() {
+    commitCounter += 1
+    return createHash('sha1').update(`commit-${commitCounter}`).digest('hex')
+  }
+
+  function treeDoc() {
+    // Real recursive listings carry a `tree` entry per directory; keep them so
+    // the mirror's "ignore anything that isn't an object blob" path is
+    // exercised the way it will be in production.
+    const shards = new Set(
+      [...files.keys()].filter(p => p.includes('/')).map(p => p.split('/')[0])
+    )
+    const tree = [
+      ...[...shards].map(path => ({ path, type: 'tree', mode: '040000', sha: 'a'.repeat(40) })),
+      ...[...files.entries()].map(([path, bytes]) => ({
+        path,
+        type: 'blob',
+        mode: '100644',
+        sha: createHash('sha1').update(bytes).digest('hex'),
+        size: sizeOverrides.get(path) ?? bytes.length,
+      })),
+    ]
+    return { sha: commit, tree, truncated }
+  }
+
+  const server = createServer((req, res) => {
+    const path = decodeURIComponent(new URL(req.url, 'http://localhost').pathname)
+    requests.push({ method: req.method, path })
+
+    const json = (status, body) => {
+      const text = JSON.stringify(body)
+      res.writeHead(status, {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(text),
+      })
+      res.end(text)
+    }
+
+    const refPrefix = `/repos/${repo}/git/ref/heads/`
+    const treePrefix = `/repos/${repo}/git/trees/`
+    const rawPrefix = `/raw/${repo}/`
+
+    if (path.startsWith(refPrefix)) {
+      if (path.slice(refPrefix.length) !== branch) return json(404, { message: 'Not Found' })
+      return json(200, { ref: `refs/heads/${branch}`, object: { sha: commit, type: 'commit' } })
+    }
+    if (path.startsWith(treePrefix)) {
+      if (path.slice(treePrefix.length) !== commit) return json(404, { message: 'Not Found' })
+      return json(200, treeDoc())
+    }
+    if (path.startsWith(rawPrefix)) {
+      // <sha>/<object path>
+      const rest = path.slice(rawPrefix.length)
+      const slash = rest.indexOf('/')
+      if (rest.slice(0, slash) !== commit) return json(404, { message: 'Not Found' })
+      const bytes = files.get(rest.slice(slash + 1))
+      if (!bytes) return json(404, { message: 'Not Found' })
+      res.writeHead(200, { 'content-type': 'text/plain', 'content-length': bytes.length })
+      return res.end(bytes)
+    }
+    return json(404, { message: 'Not Found' })
+  })
+
+  const port = await new Promise(res =>
+    server.listen(0, '127.0.0.1', () => res(server.address().port))
+  )
+  const origin = `http://127.0.0.1:${port}`
+
+  return {
+    repo,
+    branch,
+    apiBase: origin,
+    rawBase: `${origin}/raw`,
+    requests,
+    get commit() {
+      return commit
+    },
+    /// Add a hash-addressed object; returns its hash, bytes and tree path.
+    publish(content) {
+      const bytes = Buffer.from(content)
+      const hash = hex(keccak_256(bytes))
+      const path = `${hash.slice(0, 2)}/${hash.slice(2)}`
+      files.set(path, bytes)
+      commit = nextCommit()
+      return { hash, bytes, path }
+    },
+    /// Add a file at an arbitrary path — a README, or an object path whose
+    /// contents do not hash to it.
+    publishAt(path, content) {
+      files.set(path, Buffer.from(content))
+      commit = nextCommit()
+      return path
+    },
+    unpublish(path) {
+      files.delete(path)
+      sizeOverrides.delete(path)
+      commit = nextCommit()
+    },
+    /// Claim a size in the tree listing without transferring those bytes, so
+    /// the per-object cap can be tested without moving 64 MiB.
+    claimSize(path, size) {
+      sizeOverrides.set(path, size)
+      commit = nextCommit()
+    },
+    setTruncated(value) {
+      truncated = value
+      commit = nextCommit()
+    },
+    close() {
+      return new Promise(res => server.close(res))
+    },
+  }
+}
+
+/// Runs the gateway binary as a *client* (`tor-js-gateway sync …`) and resolves
+/// with its exit code and streams. Never throws on a non-zero exit — the exit
+/// code is part of what the subcommand promises.
+export function runCli(args, { env = {} } = {}) {
+  return new Promise((res, rej) => {
+    const child = spawn(GATEWAY_BIN, args, {
+      env: { ...process.env, ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', c => (stdout += c))
+    child.stderr.on('data', c => (stderr += c))
+    child.on('error', rej)
+    child.on('close', code => res({ code, stdout, stderr }))
+  })
+}
+
+/// Poll GET /keccak/sync until the mirror reports `count` objects.
+export async function waitForMirrorObjects(conn, count, ms = 20_000) {
+  const deadline = Date.now() + ms
+  let last
+  while (Date.now() < deadline) {
+    const res = await get(conn, '/keccak/sync')
+    last = res.body.toString()
+    if (res.status === 200 && JSON.parse(last).objects === count) return JSON.parse(last)
+    await new Promise(r => setTimeout(r, 50))
+  }
+  throw new Error(`mirror did not reach ${count} object(s) within ${ms}ms; last: ${last}`)
 }
 
 /// Wait until the gateway's captured logs match `pattern` (its stderr can
@@ -102,13 +262,24 @@ function freeUdpPort() {
 
 /// Spawns the gateway with `run --no-sync` over the fixture dir and resolves
 /// once it prints its dialable address. Returns { address, child, logs, stop }.
-export async function spawnGateway(fixtures, { config = {}, env = {} } = {}) {
+///
+/// `github` (from `startFakeGitHub`) both configures the mirror's repo/branch
+/// and points its two origin env vars at the fake, so no test reaches the real
+/// api.github.com. Without it the worker-bundles capability stays off, which is
+/// what an operator who never set keccak_repo gets.
+export async function spawnGateway(
+  fixtures,
+  { config = {}, env = {}, args = [], github } = {}
+) {
   const port = await freeUdpPort()
   const cfg = {
     data_dir: fixtures.dataDir,
     kps_port: port,
     kps_key_file: join(fixtures.dir, 'kps.key'),
-    keccak_dir: fixtures.bundlesDir,
+    keccak_repo: github?.repo ?? '',
+    keccak_branch: github?.branch ?? '',
+    keccak_poll_interval: 86400,
+    keccak_manual_sync_min_interval: 1800,
     advertised_addresses: ['127.0.0.1'],
     tunnel_max: 8192,
     tunnel_per_ip: 16,
@@ -119,8 +290,19 @@ export async function spawnGateway(fixtures, { config = {}, env = {} } = {}) {
   const cfgPath = join(fixtures.dir, 'config.json5')
   await writeFile(cfgPath, JSON.stringify(cfg, null, 2))
 
-  const child = spawn(GATEWAY_BIN, ['--config', cfgPath, 'run', '--no-sync'], {
-    env: { ...process.env, TOR_JS_GATEWAY_ALLOW_LOCAL_TARGETS: '1', ...env },
+  const child = spawn(GATEWAY_BIN, ['--config', cfgPath, 'run', '--no-sync', ...args], {
+    env: {
+      ...process.env,
+      TOR_JS_GATEWAY_ALLOW_LOCAL_TARGETS: '1',
+      // Never let a test fall through to the real GitHub: an unset base would
+      // silently start polling it.
+      TOR_JS_GATEWAY_GITHUB_API: github?.apiBase ?? 'http://127.0.0.1:1',
+      TOR_JS_GATEWAY_GITHUB_RAW: github?.rawBase ?? 'http://127.0.0.1:1',
+      // A token would change the request shape against the fake, and there is
+      // nothing to authenticate to.
+      GITHUB_TOKEN: '',
+      ...env,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
 
@@ -150,6 +332,8 @@ export async function spawnGateway(fixtures, { config = {}, env = {} } = {}) {
     address,
     child,
     logs,
+    // The `sync` subcommand reads this to derive the local gateway's address.
+    configPath: cfgPath,
     async stop() {
       if (child.exitCode !== null) return
       child.kill('SIGTERM')

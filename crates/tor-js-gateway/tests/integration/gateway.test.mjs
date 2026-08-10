@@ -10,21 +10,29 @@ import {
   makeFixtures,
   spawnGateway,
   startEcho,
+  startFakeGitHub,
   exchange,
   get,
   connectTunnel,
+  runCli,
   waitForLog,
+  waitForMirrorObjects,
 } from './helpers.mjs'
 
 const enc = new TextEncoder()
 
-let fixtures, echo, gateway, conn
+let fixtures, echo, gateway, conn, github, bundle
 
 before(async () => {
   echo = await startEcho()
+  // One object published on the mirrored branch before the gateway starts, so
+  // the shared gateway has something to serve at /keccak/.
+  github = await startFakeGitHub()
+  bundle = github.publish(`export const fixture = '${Date.now()}'\n`)
   fixtures = await makeFixtures({ allowedTargets: [`127.0.0.1:${echo.port}`] })
-  gateway = await spawnGateway(fixtures)
+  gateway = await spawnGateway(fixtures, { github })
   conn = await dial(gateway.address)
+  await waitForMirrorObjects(conn, 1)
 })
 
 after(async () => {
@@ -32,6 +40,7 @@ after(async () => {
   await gateway?.stop()
   await echo?.close()
   await fixtures?.cleanup()
+  await github?.close()
 })
 
 test('metadata.json — capability discovery', async () => {
@@ -42,7 +51,14 @@ test('metadata.json — capability discovery', async () => {
   const meta = JSON.parse(res.body.toString())
   assert.equal(meta.protocol, 'kps-http/1')
   assert.equal(meta.software, 'tor-js-gateway')
-  for (const cap of ['metadata', 'bootstrap', 'connect', 'relay-random', 'worker-bundles']) {
+  for (const cap of [
+    'metadata',
+    'bootstrap',
+    'connect',
+    'relay-random',
+    'worker-bundles',
+    'worker-bundles-sync',
+  ]) {
     assert.ok(meta.capabilities.includes(cap), `capability ${cap}`)
   }
   assert.deepEqual(meta.addresses, [gateway.address])
@@ -61,14 +77,14 @@ test('bootstrap.zip.zst — bytes and headers', async () => {
   assert.deepEqual(zstdDecompressSync(res.body), fixtures.bootstrapZip)
 })
 
-test('worker bundle — happy path is immutable and length-delimited', async () => {
-  const h = fixtures.bundleHash
+test('worker bundle — a mirrored object is immutable and length-delimited', async () => {
+  const h = bundle.hash
   const res = await get(conn, `/keccak/${h.slice(0, 2)}/${h.slice(2)}`)
   assert.equal(res.status, 200)
   assert.equal(res.headers['content-type'], 'text/javascript')
   assert.equal(res.headers['cache-control'], 'public, max-age=31536000, immutable')
   assert.equal(res.headers['content-length'], String(res.body.length))
-  assert.deepEqual(res.body, fixtures.bundleBytes)
+  assert.deepEqual(res.body, bundle.bytes)
 })
 
 test('worker bundle — unknown hash and malformed paths are 404', async () => {
@@ -77,26 +93,382 @@ test('worker bundle — unknown hash and malformed paths are 404', async () => {
   assert.equal((await get(conn, `/keccak/AA/${'a'.repeat(62)}`)).status, 404) // uppercase
   assert.equal((await get(conn, `/keccak/${'a'.repeat(64)}`)).status, 404) // unsharded
   assert.equal((await get(conn, `/keccak/a/${'a'.repeat(63)}`)).status, 404) // bad split
-  const h = fixtures.bundleHash
+  const h = bundle.hash
   assert.equal((await get(conn, `/keccak/${h.slice(0, 2)}/${h.slice(2)}.js`)).status, 404) // extension
   assert.equal((await get(conn, `/worker/${h}.js`)).status, 404) // old route is gone
 })
 
-test('worker bundle — a mismatched file is refused (and logged) on request', async () => {
-  // Verification is lazy: nothing is logged until the bad path is requested.
-  const res = await get(conn, `/keccak/00/${'0'.repeat(62)}`)
-  assert.equal(res.status, 404)
-  // The server's stderr log line can trail the HTTP response slightly.
-  await waitForLog(gateway, /REFUSING .*00\/0{62}/)
+test('mirror status — GET /keccak/sync reports the tracked branch', async () => {
+  const res = await get(conn, '/keccak/sync')
+  assert.equal(res.status, 200)
+  assert.equal(res.headers['content-type'], 'application/json')
+  const status = JSON.parse(res.body.toString())
+  assert.equal(status.repo, github.repo)
+  assert.equal(status.branch, github.branch)
+  assert.equal(status.commit, github.commit)
+  assert.equal(status.objects, 1)
+  assert.equal(status.last_error, null)
+  assert.ok(status.last_success, 'a successful sync is recorded')
 })
 
-test('worker bundle — a file added after startup is served (lazy load)', async () => {
-  const { hash, bytes } = await fixtures.addBundle(
-    `export const late = '${Date.now()}'\n`
-  )
-  const res = await get(conn, `/keccak/${hash.slice(0, 2)}/${hash.slice(2)}`)
+test('mirror — the branch is the only source: non-object paths are ignored', async () => {
+  // A README in the branch must not break a sync or become an object.
+  github.publishAt('README.md', '# objects\n')
+  const res = await exchange(conn, 'POST /keccak/sync HTTP/1.1\r\nHost: x\r\n\r\n')
   assert.equal(res.status, 200)
-  assert.deepEqual(res.body, bytes)
+  const outcome = JSON.parse(res.body.toString())
+  assert.equal(outcome.added, 0)
+  assert.equal(outcome.removed, 0)
+  assert.equal(outcome.objects, 1)
+  assert.ok(outcome.ignored >= 1, `ignored: ${outcome.ignored}`)
+})
+
+test('mirror — a client trigger is refused inside the throttle window', async () => {
+  // The previous test consumed the window (default 1800 s), and the window is
+  // what bounds how often anyone can make this gateway talk to its origin.
+  const res = await exchange(conn, 'POST /keccak/sync HTTP/1.1\r\nHost: x\r\n\r\n')
+  assert.equal(res.status, 429)
+  const retryAfter = Number(res.headers['retry-after'])
+  assert.ok(retryAfter > 1700 && retryAfter <= 1801, `retry-after: ${retryAfter}`)
+  assert.equal(JSON.parse(res.body.toString()).retry_after, retryAfter)
+})
+
+test('mirror — a trigger picks up a newly published object', async () => {
+  const gh = await startFakeGitHub()
+  const first = gh.publish(`export const one = '${Date.now()}'\n`)
+  const fx = await makeFixtures({ allowedTargets: [] })
+  // No throttle: this test needs more than one trigger.
+  const gw = await spawnGateway(fx, {
+    github: gh,
+    config: { keccak_manual_sync_min_interval: 0 },
+  })
+  try {
+    const c = await dial(gw.address)
+    await waitForMirrorObjects(c, 1)
+
+    const second = gh.publish(`export const two = '${Date.now()}'\n`)
+    // Not served until a sync notices it — the poll is a day away.
+    assert.equal(
+      (await get(c, `/keccak/${second.hash.slice(0, 2)}/${second.hash.slice(2)}`)).status,
+      404
+    )
+
+    const res = await exchange(c, 'POST /keccak/sync HTTP/1.1\r\nHost: x\r\n\r\n')
+    assert.equal(res.status, 200)
+    const outcome = JSON.parse(res.body.toString())
+    assert.equal(outcome.added, 1)
+    assert.equal(outcome.objects, 2)
+    assert.equal(outcome.commit, gh.commit)
+    assert.equal(outcome.unchanged, false)
+
+    // Both objects are now served, byte for byte.
+    for (const o of [first, second]) {
+      const got = await get(c, `/keccak/${o.hash.slice(0, 2)}/${o.hash.slice(2)}`)
+      assert.equal(got.status, 200)
+      assert.deepEqual(got.body, o.bytes)
+    }
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+    await gh.close()
+  }
+})
+
+test('mirror — dropping a file from the branch unpublishes the object', async () => {
+  const gh = await startFakeGitHub()
+  const keep = gh.publish('export const keep = 1\n')
+  const drop = gh.publish('export const drop = 1\n')
+  const fx = await makeFixtures({ allowedTargets: [] })
+  const gw = await spawnGateway(fx, {
+    github: gh,
+    config: { keccak_manual_sync_min_interval: 0 },
+  })
+  try {
+    const c = await dial(gw.address)
+    await waitForMirrorObjects(c, 2)
+
+    gh.unpublish(drop.path)
+    const res = await exchange(c, 'POST /keccak/sync HTTP/1.1\r\nHost: x\r\n\r\n')
+    assert.equal(res.status, 200)
+    const outcome = JSON.parse(res.body.toString())
+    assert.equal(outcome.removed, 1)
+    assert.equal(outcome.objects, 1)
+
+    assert.equal(
+      (await get(c, `/keccak/${drop.hash.slice(0, 2)}/${drop.hash.slice(2)}`)).status,
+      404,
+      'an unpublished object stops being served'
+    )
+    assert.equal(
+      (await get(c, `/keccak/${keep.hash.slice(0, 2)}/${keep.hash.slice(2)}`)).status,
+      200
+    )
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+    await gh.close()
+  }
+})
+
+test('mirror — a file whose contents do not hash to its name is never stored', async () => {
+  const gh = await startFakeGitHub()
+  const good = gh.publish('export const good = 1\n')
+  // Same shape, wrong contents: the branch is lying about what this object is.
+  const liar = `ab/${'c'.repeat(62)}`
+  gh.publishAt(liar, 'export const evil = 1\n')
+  const fx = await makeFixtures({ allowedTargets: [] })
+  const gw = await spawnGateway(fx, { github: gh })
+  try {
+    const c = await dial(gw.address)
+    await waitForMirrorObjects(c, 1)
+    // The good object landed; the liar was refused, and refusing it did not
+    // stop the rest of the sync.
+    assert.equal(
+      (await get(c, `/keccak/${good.hash.slice(0, 2)}/${good.hash.slice(2)}`)).status,
+      200
+    )
+    assert.equal((await get(c, `/keccak/${liar}`)).status, 404)
+    await waitForLog(gw, /keccak256 of the contents is/, 10_000)
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+    await gh.close()
+  }
+})
+
+test('mirror — an oversized object is skipped, not fetched', async () => {
+  const gh = await startFakeGitHub()
+  const small = gh.publish('export const small = 1\n')
+  const big = gh.publish('export const big = 1\n')
+  gh.claimSize(big.path, 65 * 1024 * 1024) // over the 64 MiB object cap
+  const fx = await makeFixtures({ allowedTargets: [] })
+  const gw = await spawnGateway(fx, { github: gh })
+  try {
+    const c = await dial(gw.address)
+    await waitForMirrorObjects(c, 1)
+    assert.equal(
+      (await get(c, `/keccak/${small.hash.slice(0, 2)}/${small.hash.slice(2)}`)).status,
+      200
+    )
+    assert.equal(
+      (await get(c, `/keccak/${big.hash.slice(0, 2)}/${big.hash.slice(2)}`)).status,
+      404
+    )
+    // Skipped on the listing alone: its bytes were never requested.
+    assert.ok(
+      !gh.requests.some(r => r.path.endsWith(big.path)),
+      'the oversized blob must not be downloaded'
+    )
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+    await gh.close()
+  }
+})
+
+test('mirror — a truncated tree listing fails the sync instead of pruning', async () => {
+  const gh = await startFakeGitHub()
+  const obj = gh.publish('export const kept = 1\n')
+  const fx = await makeFixtures({ allowedTargets: [] })
+  const gw = await spawnGateway(fx, {
+    github: gh,
+    config: { keccak_manual_sync_min_interval: 0 },
+  })
+  try {
+    const c = await dial(gw.address)
+    await waitForMirrorObjects(c, 1)
+
+    // A truncated listing is not a smaller branch: acting on one would delete
+    // objects that are still published.
+    gh.setTruncated(true)
+    const res = await exchange(c, 'POST /keccak/sync HTTP/1.1\r\nHost: x\r\n\r\n')
+    assert.equal(res.status, 502)
+    assert.match(JSON.parse(res.body.toString()).error, /truncated/)
+
+    assert.equal(
+      (await get(c, `/keccak/${obj.hash.slice(0, 2)}/${obj.hash.slice(2)}`)).status,
+      200,
+      'a failed sync keeps serving what was already mirrored'
+    )
+    const status = JSON.parse((await get(c, '/keccak/sync')).body.toString())
+    assert.match(status.last_error, /truncated/)
+    assert.equal(status.objects, 1)
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+    await gh.close()
+  }
+})
+
+test('mirror — an unreachable origin leaves the mirrored objects served', async () => {
+  const gh = await startFakeGitHub()
+  const obj = gh.publish('export const survives = 1\n')
+  const fx = await makeFixtures({ allowedTargets: [] })
+  const gw = await spawnGateway(fx, {
+    github: gh,
+    config: { keccak_manual_sync_min_interval: 0 },
+  })
+  try {
+    const c = await dial(gw.address)
+    await waitForMirrorObjects(c, 1)
+    await gh.close() // the origin goes away
+
+    const res = await exchange(c, 'POST /keccak/sync HTTP/1.1\r\nHost: x\r\n\r\n')
+    assert.equal(res.status, 502, 'a failed sync is a bad-gateway, not a 500')
+    assert.equal(
+      (await get(c, `/keccak/${obj.hash.slice(0, 2)}/${obj.hash.slice(2)}`)).status,
+      200
+    )
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+  }
+})
+
+test('worker bundle — a mismatched file on disk is refused (and logged) on request', async () => {
+  // The mirror never lands such a file, and would prune it; --no-mirror is how
+  // one gets to exist, and the route's own check is what catches it.
+  const gh = await startFakeGitHub()
+  const fx = await makeFixtures({ allowedTargets: [] })
+  await fx.seedRawObject('00' + '0'.repeat(62), '// wrong hash\n')
+  const { hash, bytes } = await fx.seedObject('export const honest = 1\n')
+  const gw = await spawnGateway(fx, { github: gh, args: ['--no-mirror'] })
+  try {
+    const c = await dial(gw.address)
+    // Verification is lazy: nothing is logged until the bad path is requested.
+    assert.equal((await get(c, `/keccak/00/${'0'.repeat(62)}`)).status, 404)
+    await waitForLog(gw, /REFUSING .*00\/0{62}/)
+    // The correctly-named neighbour is unaffected.
+    const ok = await get(c, `/keccak/${hash.slice(0, 2)}/${hash.slice(2)}`)
+    assert.equal(ok.status, 200)
+    assert.deepEqual(ok.body, bytes)
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+    await gh.close()
+  }
+})
+
+test('mirror — --no-mirror refuses triggers rather than contacting the branch', async () => {
+  const gh = await startFakeGitHub()
+  gh.publish('export const unseen = 1\n')
+  const fx = await makeFixtures({ allowedTargets: [] })
+  const gw = await spawnGateway(fx, { github: gh, args: ['--no-mirror'] })
+  try {
+    const c = await dial(gw.address)
+    const res = await exchange(c, 'POST /keccak/sync HTTP/1.1\r\nHost: x\r\n\r\n')
+    assert.equal(res.status, 503)
+    assert.match(JSON.parse(res.body.toString()).error, /disabled/)
+    assert.deepEqual(gh.requests, [], 'the branch must not be contacted at all')
+    // Status still answers, so an operator can see what is (not) happening.
+    assert.equal((await get(c, '/keccak/sync')).status, 200)
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+    await gh.close()
+  }
+})
+
+test('sync CLI — triggers over KPS, reports state, and exits non-zero when refused', async () => {
+  const gh = await startFakeGitHub()
+  const first = gh.publish('export const cli = 1\n')
+  const fx = await makeFixtures({ allowedTargets: [] })
+  const gw = await spawnGateway(fx, {
+    github: gh,
+    config: { keccak_manual_sync_min_interval: 1800 },
+  })
+  try {
+    const c = await dial(gw.address)
+    await waitForMirrorObjects(c, 1)
+    await c.close()
+
+    // --status reads without triggering, and with no ADDRESS the subcommand
+    // derives the local gateway's address from the config's port and key.
+    const status = await runCli(['--config', gw.configPath, 'sync', '--status'])
+    assert.equal(status.code, 0, status.stderr)
+    const state = JSON.parse(status.stdout)
+    assert.equal(state.repo, gh.repo)
+    assert.equal(state.branch, gh.branch)
+    assert.equal(state.objects, 1)
+
+    // A trigger picks up a push, and prints the summary the gateway returned.
+    const second = gh.publish('export const cli2 = 1\n')
+    const synced = await runCli(['--config', gw.configPath, 'sync'])
+    assert.equal(synced.code, 0, synced.stderr)
+    const outcome = JSON.parse(synced.stdout)
+    assert.equal(outcome.added, 1)
+    assert.equal(outcome.objects, 2)
+    assert.equal(outcome.commit, gh.commit)
+
+    // Both objects really are being served afterwards.
+    const c2 = await dial(gw.address)
+    for (const o of [first, second]) {
+      assert.equal(
+        (await get(c2, `/keccak/${o.hash.slice(0, 2)}/${o.hash.slice(2)}`)).status,
+        200
+      )
+    }
+    await c2.close()
+
+    // Refusals must be visible to a script, not just to a reader.
+    const throttled = await runCli(['--config', gw.configPath, 'sync'])
+    assert.equal(throttled.code, 1, 'a 429 has to be a non-zero exit')
+    assert.match(throttled.stderr, /429/)
+    assert.equal(JSON.parse(throttled.stdout).retry_after > 0, true)
+
+    // An explicit address is the remote-gateway form.
+    const remote = await runCli(['--config', gw.configPath, 'sync', gw.address, '--status'])
+    assert.equal(remote.code, 0, remote.stderr)
+    assert.equal(JSON.parse(remote.stdout).objects, 2)
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+    await gh.close()
+  }
+})
+
+test('sync CLI — says so when the gateway serves no bundles', async () => {
+  const fx = await makeFixtures({ allowedTargets: [] })
+  const gw = await spawnGateway(fx) // no github: capability off
+  try {
+    const res = await runCli(['--config', gw.configPath, 'sync'])
+    assert.equal(res.code, 1)
+    // Caught from the config before dialing, so the message names the fields.
+    assert.match(res.stderr, /keccak_repo/)
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+  }
+})
+
+test('worker bundles — unconfigured means the capability is simply absent', async () => {
+  // No keccak_repo/keccak_branch: the routes are gone and nothing is advertised.
+  const fx = await makeFixtures({ allowedTargets: [] })
+  const gw = await spawnGateway(fx)
+  try {
+    const c = await dial(gw.address)
+    const meta = JSON.parse((await get(c, '/metadata.json')).body.toString())
+    assert.ok(!meta.capabilities.includes('worker-bundles'))
+    assert.ok(!meta.capabilities.includes('worker-bundles-sync'))
+    assert.equal((await get(c, `/keccak/aa/${'a'.repeat(62)}`)).status, 404)
+    assert.equal((await get(c, '/keccak/sync')).status, 404)
+    assert.equal(
+      (await exchange(c, 'POST /keccak/sync HTTP/1.1\r\nHost: x\r\n\r\n')).status,
+      404
+    )
+    await c.close()
+  } finally {
+    await gw.stop()
+    await fx.cleanup()
+  }
 })
 
 test('relay/random — served from the preloaded allowlist', async () => {

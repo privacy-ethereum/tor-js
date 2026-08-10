@@ -111,7 +111,11 @@ async function startGateway(stateDir, echoPort) {
     data_dir: dataDir,
     kps_port: 0,
     kps_key_file: join(stateDir, 'kps.key'),
-    keccak_dir: '',
+    // No mirror: the browser suite covers the data plane, not worker bundles.
+    keccak_repo: '',
+    keccak_branch: '',
+    keccak_poll_interval: 86400,
+    keccak_manual_sync_min_interval: 1800,
     advertised_addresses: ['127.0.0.1'],
     tunnel_max: 8192,
     tunnel_per_ip: 16,

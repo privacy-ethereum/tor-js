@@ -19,7 +19,8 @@ stream** — the shape of HTTP/3 (semantics mapped one-request-per-transport-str
 with HTTP/1.1's text syntax, so standard HTTP software (hyper, curl through a
 TCP↔KPS bridge) handles it unmodified. One server multiplexes:
 
-- serving the anon-rpc worker bundle (hash-addressed immutable objects);
+- serving the anon-rpc worker bundle (hash-addressed immutable objects), and
+  refreshing that object store on request;
 - serving `bootstrap.zip.zst` (Tor directory fast-bootstrap archive);
 - proxying TCP to Tor relays (`CONNECT`);
 - capability discovery (`/metadata.json`);
@@ -213,7 +214,7 @@ A server advertises what it supports at `GET /metadata.json`:
   "protocol": "kps-http/1",
   "software": "tor-js-gateway",
   "version": "<server version>",
-  "capabilities": ["metadata", "bootstrap", "connect", "worker-bundles", "relay-random"],
+  "capabilities": ["metadata", "bootstrap", "connect", "worker-bundles", "worker-bundles-sync", "relay-random"],
   "addresses": ["198.51.100.7:12298:uEiAxk...9Qw", "[2001:db8::7]:12298:uEiAxk...9Qw"]
 }
 ```
@@ -231,8 +232,47 @@ Defined routes:
 | `metadata` | `GET /metadata.json` | `application/json` |
 | `bootstrap` | `GET /bootstrap.zip.zst` | zstd-compressed zip; MUST include `X-Decompressed-Content-Length` and SHOULD include `Content-Length`. There is **no transparent decompression** over raw streams — clients decompress themselves. |
 | `worker-bundles` | `GET /keccak/{hh}/{rest}` | `{hh}` is the first 2 and `{rest}` the remaining 62 of the object's 64 lowercase keccak256 hex chars, no `0x`. The served bytes MUST satisfy `keccak256(bytes) == hash`. Immutable: `Cache-Control: public, max-age=31536000, immutable`. Unknown hash → `404`. |
+| `worker-bundles-sync` | `GET`/`POST /keccak/sync` | §5.1 |
 | `connect` | `CONNECT <ip>:<port>` | §4 |
 | `relay-random` | `GET /relay/random` | as in the pre-KPS gateway; JSON descriptor of a random consensus relay |
+
+### 5.1 Refreshing the object store
+
+A server that obtains its objects from somewhere else — tor-js-gateway mirrors
+a branch of a git repository — polls on its own schedule, which can be long
+(the reference implementation polls daily). A client that has just published an
+object should not have to wait for that. `worker-bundles-sync` lets it ask:
+
+| Method | Meaning |
+|---|---|
+| `POST /keccak/sync` | Refresh the object store from its source **now**. The response is sent after the refresh completes, so a `200` means the objects listed in it are being served. |
+| `GET /keccak/sync` | Report what the store tracks and how the last refresh went. `application/json`; the fields are server-specific and clients MUST ignore unknown ones. |
+
+`POST` responses:
+
+| Status | Meaning |
+|---|---|
+| `200` | Refreshed. Body is a JSON summary; `added`, `removed` and `objects` counts SHOULD be present. |
+| `429` | Refused: a client-triggered refresh ran too recently. MUST include `Retry-After` in seconds. |
+| `409` | A refresh is already running. |
+| `503` | Refreshing is disabled on this server. |
+| `502` | The refresh ran and failed (the source was unreachable, or answered with something unusable). |
+
+Rules:
+
+- The endpoint is **unauthenticated**, so a server MUST rate-limit
+  client-triggered refreshes; the reference implementation refuses a second one
+  within 30 minutes. The limit is what bounds how often an anonymous client can
+  make the server talk to its source, and it MUST be charged on the *attempt*,
+  not on success — otherwise a failing source becomes a way to keep hitting it.
+- A server MUST NOT let a refresh reduce what it serves on incomplete
+  information. In particular, if the source's listing is truncated or otherwise
+  partial, the refresh MUST fail rather than treat absent entries as deleted.
+- Bytes admitted by a refresh MUST satisfy `keccak256(bytes) == hash` for the
+  name they are stored under. This is what makes the source untrusted
+  infrastructure: it chooses *which* objects exist, never what they contain.
+- Automatic polling MUST NOT be affected by the client-trigger rate limit, and
+  a failed refresh MUST leave the previously served objects in place.
 
 ## 6. The anon-rpc bundle-fetch subset
 
