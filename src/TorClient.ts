@@ -36,7 +36,13 @@ export class TorClient {
         'because browsers can\'t open regular TCP sockets.',
       );
     }
-    this.log = (options.log ?? new Log({ rawLog: () => {} }));
+    // Default to a discarding sink so a library never spams a host page's
+    // console — but not when the caller has explicitly asked for a log level.
+    // `logLevel` only sets the wasm-side tracing filter, so pairing it with the
+    // discarding default made arti generate every line and then throw them all
+    // away, which reads as "logging is broken".
+    this.log = options.log
+      ?? (options.logLevel ? new Log() : new Log({ rawLog: () => {} }));
     this.clientPromise = this.bootstrap(options);
     // Bootstrap starts immediately, so a failure has no awaiter until the first
     // fetch()/ready(). Attach a sink to keep that from surfacing as an unhandled

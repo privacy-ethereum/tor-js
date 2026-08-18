@@ -149,7 +149,7 @@ impl Config {
             (true, true) => return Ok(KeccakSource::Disabled),
             (true, false) => anyhow::bail!(
                 "keccak_branch is set to {branch:?} but keccak_repo is empty — \
-                 set both (e.g. \"privacy-ethereum/tor-js\" + \"keccak\") to serve \
+                 set both (e.g. \"ethereum/tor-js\" + \"keccak\") to serve \
                  worker bundles, or clear both to disable the capability"
             ),
             (false, true) => anyhow::bail!(
@@ -218,7 +218,7 @@ impl Config {
   // default: leaving them empty disables the capability rather than quietly
   // mirroring somebody else's repository. Setting only one is an error.
   //
-  //   "keccak_repo": "privacy-ethereum/tor-js",
+  //   "keccak_repo": "ethereum/tor-js",
   //   "keccak_branch": "keccak",
   "keccak_repo": "",
   "keccak_branch": "",
@@ -422,9 +422,9 @@ mod tests {
     #[test]
     fn both_fields_set_resolves_to_a_mirror() {
         assert_eq!(
-            source_of("privacy-ethereum/tor-js", "keccak").unwrap(),
+            source_of("ethereum/tor-js", "keccak").unwrap(),
             KeccakSource::Mirror {
-                repo: "privacy-ethereum/tor-js".into(),
+                repo: "ethereum/tor-js".into(),
                 branch: "keccak".into(),
             }
         );
@@ -435,7 +435,7 @@ mod tests {
     /// the operator never named.
     #[test]
     fn exactly_one_field_set_is_an_error_naming_the_missing_one() {
-        let err = source_of("privacy-ethereum/tor-js", "").unwrap_err().to_string();
+        let err = source_of("ethereum/tor-js", "").unwrap_err().to_string();
         assert!(err.contains("keccak_branch"), "{err}");
         assert!(err.contains("no default"), "{err}");
 
@@ -447,11 +447,11 @@ mod tests {
     fn a_malformed_repo_is_rejected() {
         for repo in [
             "tor-js",                       // no owner
-            "privacy-ethereum/tor-js/x",    // too many segments
+            "ethereum/tor-js/x",    // too many segments
             "/tor-js",                      // empty owner
-            "privacy-ethereum/",            // empty name
+            "ethereum/",            // empty name
             "privacy ethereum/tor-js",      // space
-            "privacy-ethereum/../../etc",   // traversal
+            "ethereum/../../etc",   // traversal
             "https://github.com/a/b",       // a URL, not owner/repo
         ] {
             assert!(source_of(repo, "keccak").is_err(), "accepted repo {repo:?}");
@@ -475,12 +475,12 @@ mod tests {
             "with space",
         ] {
             assert!(
-                source_of("privacy-ethereum/tor-js", branch).is_err(),
+                source_of("ethereum/tor-js", branch).is_err(),
                 "accepted branch {branch:?}",
             );
         }
         // Slashes inside a name are normal and stay allowed.
-        assert!(source_of("privacy-ethereum/tor-js", "feature/keccak").is_ok());
+        assert!(source_of("ethereum/tor-js", "feature/keccak").is_ok());
     }
 
     #[test]
@@ -488,7 +488,7 @@ mod tests {
         let dir = TempDir::new("config-half");
         let path = dir.join("config.json5");
         let text = Config::to_json5_with_comments()
-            .replace(r#""keccak_repo": """#, r#""keccak_repo": "privacy-ethereum/tor-js""#);
+            .replace(r#""keccak_repo": """#, r#""keccak_repo": "ethereum/tor-js""#);
         std::fs::write(&path, text).unwrap();
         let msg = format!("{:#}", Config::load(&path).unwrap_err());
         assert!(msg.contains("keccak_branch"), "{msg}");

@@ -96,7 +96,7 @@ console.<span class="f">log</span>(<span class="k">await</span> res.<span class=
       <div class="section-head">
         <div class="eyebrow">Architecture</div>
         <h2>The gateway is a blind relay</h2>
-        <p>Browsers can't open raw TCP, so a small gateway relays bytes to Tor relays over <a href="https://privacy-ethereum.github.io/kps/" target="_blank" rel="noopener">KPS</a> (WebRTC/QUIC). It never sees your traffic or destination.</p>
+        <p>Browsers can't open raw TCP, so a small gateway relays bytes to Tor relays over <a href="https://ethereum.github.io/kps/" target="_blank" rel="noopener">KPS</a> (WebRTC/QUIC). It never sees your traffic or destination.</p>
       </div>
       <div class="card arch">
         <div class="arch-node"><div class="t">Your browser</div><p class="d">Builds circuits, holds all keys, does all crypto</p></div>
@@ -105,7 +105,7 @@ console.<span class="f">log</span>(<span class="k">await</span> res.<span class=
         <div class="arch-arrow">→</div>
         <div class="arch-node"><div class="t">Tor network</div><p class="d">Guard → middle → exit → the open internet</p></div>
       </div>
-      <p class="arch-note">Run your own gateway from the <a href="https://github.com/privacy-ethereum/tor-js/tree/main/crates/tor-js-gateway" target="_blank" rel="noopener">tor-js-gateway</a> crate — a single binary, one UDP port.</p>
+      <p class="arch-note">Run your own gateway from the <a href="https://github.com/ethereum/tor-js/tree/main/crates/tor-js-gateway" target="_blank" rel="noopener">tor-js-gateway</a> crate — a single binary, one UDP port.</p>
     </section>
 
     <!-- Tools -->
@@ -125,7 +125,7 @@ console.<span class="f">log</span>(<span class="k">await</span> res.<span class=
       <h2>Bring Tor to your app</h2>
       <div class="cta-row">
         <a class="btn" href="demo.html">Live demo →</a>
-        <a class="btn secondary" href="https://github.com/privacy-ethereum/tor-js" target="_blank" rel="noopener">Read the docs</a>
+        <a class="btn secondary" href="https://github.com/ethereum/tor-js" target="_blank" rel="noopener">Read the docs</a>
       </div>
     </section>
   </main>

@@ -2,7 +2,7 @@
 
 Gateway server for [tor-js](https://www.npmjs.com/package/tor-js) — enabling real Tor circuits built locally in the browser using WebAssembly. All cryptography runs on the client. The gateway never sees your traffic or knows your destination — it just relays encrypted bytes to Tor relays.
 
-Built with [Arti](https://gitlab.torproject.org/tpo/core/arti), the Rust Tor implementation, and [KPS](https://privacy-ethereum.github.io/kps/) (Key Pinned Streams) as the transport.
+Built with [Arti](https://gitlab.torproject.org/tpo/core/arti), the Rust Tor implementation, and [KPS](https://ethereum.github.io/kps/) (Key Pinned Streams) as the transport.
 
 ## Features
 
@@ -91,7 +91,7 @@ Config is stored as JSON5 (supports comments and trailing commas) at `~/.config/
   // default: leaving them empty disables the capability rather than quietly
   // mirroring somebody else's repository. Setting only one is an error.
   //
-  //   "keccak_repo": "privacy-ethereum/tor-js",
+  //   "keccak_repo": "ethereum/tor-js",
   //   "keccak_branch": "keccak",
   "keccak_repo": "",
   "keccak_branch": "",
