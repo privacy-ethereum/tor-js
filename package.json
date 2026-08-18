@@ -61,11 +61,11 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/privacy-ethereum/tor-js.git"
+    "url": "git+https://github.com/ethereum/tor-js.git"
   },
-  "homepage": "https://github.com/privacy-ethereum/tor-js",
+  "homepage": "https://github.com/ethereum/tor-js",
   "bugs": {
-    "url": "https://github.com/privacy-ethereum/tor-js/issues"
+    "url": "https://github.com/ethereum/tor-js/issues"
   },
   "devDependencies": {
     "@kpstreams/core": "^0.2.1",

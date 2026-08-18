@@ -37,5 +37,5 @@ opt-level = 2
 #     id-reuse claim on ReadyState::Open so a stale closed channel doesn't
 #     shadow a reused SCTP stream id, hanging reads after ~2 streams (kps#4)
 [patch.crates-io]
-webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }
-webrtc = { git = "https://github.com/privacy-ethereum/kps.git", rev = "4982e1c1cdce3baa3f703a746367a5e53ca64928" }
+webrtc-sctp = { git = "https://github.com/ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }
+webrtc = { git = "https://github.com/ethereum/kps.git", rev = "4982e1c1cdce3baa3f703a746367a5e53ca64928" }

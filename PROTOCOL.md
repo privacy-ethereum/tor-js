@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-[KPS](https://github.com/privacy-ethereum/kps) provides secure, multiplexed,
+[KPS](https://github.com/ethereum/kps) provides secure, multiplexed,
 unnamed byte streams to a peer pinned by certificate hash. KPS deliberately has
 no stream names or protocol negotiation: applications route and frame inside
 the stream bytes.
