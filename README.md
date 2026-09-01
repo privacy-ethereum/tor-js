@@ -46,8 +46,8 @@ The package offers three ways to load the WASM binary. All export the same API.
 | Import | WASM loading | Size (gzip) | Best for |
 |---|---|---|---|
 | `tor-js` | Fetched from CDN, cached locally | 32 kB | Production web apps |
-| `tor-js/wasm-base64` | Embedded in the JS bundle | 2.3 MB | Single-file deploys |
-| `tor-js/wasm-file` | Loaded from `tor_js_bg.wasm` next to the module | 31 kB + 1.7 MB | Self-hosted, server-side |
+| `tor-js/wasm-base64` | Embedded in the JS bundle | 2.5 MB | Single-file deploys |
+| `tor-js/wasm-file` | Loaded from `tor_js_bg.wasm` next to the module | 31 kB + 1.9 MB | Self-hosted, server-side |
 
 Each also has a `/singleton` variant (see [Singleton](#singleton) below).
 

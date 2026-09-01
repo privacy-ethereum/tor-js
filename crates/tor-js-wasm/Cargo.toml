@@ -18,6 +18,7 @@ crate-type = ["cdylib", "rlib"]
 # Core arti-client (no bridge/PT needed — connects to regular relays via WS proxy)
 arti-client = { git = "https://github.com/voltrevo/arti", rev = "2be5b51e895a687d1e7fc3ce1c01896730bcb9d3", default-features = false, features = [
     "experimental-api",
+    "onion-service-client",
 ]}
 tor-rtcompat = { git = "https://github.com/voltrevo/arti", rev = "2be5b51e895a687d1e7fc3ce1c01896730bcb9d3", default-features = false }
 tor-persist = { git = "https://github.com/voltrevo/arti", rev = "2be5b51e895a687d1e7fc3ce1c01896730bcb9d3", default-features = false }
