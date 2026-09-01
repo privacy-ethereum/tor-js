@@ -21,7 +21,7 @@ const logLatest = $('log-latest'), logCount = $('log-count');
 gatewayInput.value = DEFAULT_GATEWAY;
 
 let client = null;
-let TorLib = null; // lazily imported so the 2.3 MB WASM only loads on connect
+let TorLib = null; // lazily imported so the 2.5 MB WASM only loads on connect
 let count = 0;
 
 function setStatus(state, text) {
